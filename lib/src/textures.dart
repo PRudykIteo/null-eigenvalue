@@ -48,19 +48,27 @@ class Textures {
     return _decode(pixels, size, size);
   }
 
-  /// Monochrome noise, tiled over the finished frame at a few percent. Without
-  /// it, wide dark gradients on an 8-bit display band into visible rings; with
-  /// it, the dither hides them and the picture reads as film rather than as a
+  /// Monochrome noise, tiled over the finished frame. Without it, wide dark
+  /// gradients on an 8-bit display band into visible rings; with it, the
+  /// dither hides them and the picture reads as film rather than as a
   /// gradient.
+  ///
+  /// A couple of levels of *additive* noise, drawn with BlendMode.plus, and
+  /// that choice is about cost rather than looks. This was mid-grey noise
+  /// through BlendMode.overlay, which is an advanced blend: Skia and Impeller
+  /// both satisfy one by rendering the frame to an offscreen texture and
+  /// reading it back, so a full-window overlay is an extra pass over every
+  /// pixel on screen, every frame, for an effect worth about two levels out of
+  /// 255. Additive dither breaks the same contours and stays in the ordinary
+  /// fragment pipeline.
   static Future<ui.Image> _grain(int size) {
     final rnd = math.Random(0x4E756C6C);
     final pixels = Uint8List(size * size * 4);
     for (var i = 0; i < size * size; i++) {
-      // Deviations around mid grey rather than full-range noise: the texture
-      // is drawn with BlendMode.overlay, where 128 is a no-op, so the strength
-      // of the effect lives in this number and nowhere else. Full-range noise
-      // through overlay is snow.
-      final v = (128 + (rnd.nextDouble() - 0.5) * 18).round().clamp(0, 255);
+      // One to three levels. Below one there is nothing to break a contour
+      // with; much above three and the lift of the blacks is visible as haze
+      // on a picture that is mostly black.
+      final v = rnd.nextInt(4);
       pixels[i * 4] = v;
       pixels[i * 4 + 1] = v;
       pixels[i * 4 + 2] = v;

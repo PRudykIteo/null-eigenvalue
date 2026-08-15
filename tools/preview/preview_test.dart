@@ -19,13 +19,17 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:null_eigenvalue/src/drone_controller.dart';
 import 'package:null_eigenvalue/src/hud.dart';
 import 'package:null_eigenvalue/src/nebula.dart';
 import 'package:null_eigenvalue/src/palette.dart';
+import 'package:null_eigenvalue/src/piece.dart';
 import 'package:null_eigenvalue/src/textures.dart';
 import 'package:nulleig/nulleig.dart';
 
-const Size kPhone = Size(393, 852); // iPhone 15 in logical pixels
+// A narrow window, which is the shape the composition was designed in and
+// the one it is easiest to break by widening something in the chrome.
+const Size kPhone = Size(393, 852);
 
 // The window the desktop runners open at. The point of shooting this size is
 // that it is the one thing about the desktop build a phone-shaped preview
@@ -37,6 +41,14 @@ const Size kDesktop = Size(1040, 780);
 // const in a still that nobody is going to click.
 void _ignore() {}
 void _ignoreBool(bool _) {}
+void _ignoreInt(int _) {}
+void _ignoreDouble(double _) {}
+void _ignoreString(String _) {}
+bool _ignoreLoad(String _) => true;
+
+// A fixed piece, so the stills are reproducible down to the token in them.
+final String _sampleToken =
+    const Piece(seed: 0x4E756C6C, mood: 1, x: 0.5, y: 0.45).token;
 
 DroneVis _vis({
   required double level,
@@ -85,7 +97,7 @@ void main() {
     // The HUD's own rule, repeated rather than imported: field_screen computes
     // it from MediaQuery, and this harness has no MediaQuery worth the name.
     final scale =
-        size == kPhone ? 1.0 : (size.shortestSide / 620).clamp(1.0, 1.5).toDouble();
+        (size.shortestSide / 620).clamp(1.0, 1.5).toDouble();
 
     tester.view.physicalSize = size * 3.0;
     tester.view.devicePixelRatio = 3.0;
@@ -139,6 +151,10 @@ void main() {
                         updateLabel: updateLabel,
                         onUpdateTap: () {},
                         volumeLabel: volumeLabel,
+                        token: _sampleToken,
+                        liked: true,
+                        onTokenTap: () {},
+                        onLike: () {},
                         onMood: (_) {},
                         onToggle: () {},
                       ),
@@ -163,8 +179,7 @@ void main() {
                             color: Colors.white.withValues(alpha: 0.34),
                           ),
                         ),
-                        if (size != kPhone)
-                          Text(
+                        Text(
                             '  0.1.9',
                             style: TextStyle(
                               fontSize: 10 * scale,
@@ -199,6 +214,47 @@ void main() {
                           showKeys: true,
                           volume: 0.72,
                           onVolume: (_) {},
+                          picture: PicturePanel(
+                            frameRate: 30,
+                            renderScale: 1,
+                            rates: DroneController.frameRates,
+                            onFrameRate: _ignoreInt,
+                            onRenderScale: _ignoreDouble,
+                          ),
+                          pieces: PiecesPanel(
+                            token: _sampleToken,
+                            liked: true,
+                            entries: <LikedEntry>[
+                              LikedEntry(
+                                  token: _sampleToken,
+                                  mood: 'Manifold',
+                                  playing: true),
+                              LikedEntry(
+                                  token: const Piece(
+                                          seed: 0xA17C33D2,
+                                          mood: 2,
+                                          x: 0.8,
+                                          y: 0.3)
+                                      .token,
+                                  mood: 'Halo',
+                                  playing: false),
+                              LikedEntry(
+                                  token: const Piece(
+                                          seed: 0x0BADC0DE,
+                                          mood: 4,
+                                          x: 0.2,
+                                          y: 0.6)
+                                      .token,
+                                  mood: 'Limit',
+                                  playing: false),
+                            ],
+                            onCopy: _ignore,
+                            onLike: _ignore,
+                            onNew: _ignore,
+                            onLoad: _ignoreLoad,
+                            onPlay: _ignoreString,
+                            onRemove: _ignoreString,
+                          ),
                           updates: const UpdatePanel(
                             auto: true,
                             busy: false,

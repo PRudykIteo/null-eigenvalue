@@ -3,9 +3,8 @@
 /// The binding is deliberately thin and deliberately synchronous. Every call
 /// here is a store to an atomic or a read of one - nanoseconds - so there is
 /// nothing to await and no isolate to hop to. The audio itself never crosses
-/// this boundary: it is generated on the OS audio thread inside the C++, which
-/// is what lets the app keep playing while Flutter is suspended behind a
-/// locked screen.
+/// this boundary: it is generated on the OS audio thread inside the C++, so a
+/// janking or garbage-collecting UI cannot interrupt the sound.
 library;
 
 import 'dart:ffi';
@@ -61,15 +60,17 @@ final class _NeStatus extends Struct {
   external int callbacks;
   @Double()
   external double elapsed;
+  @Float()
+  external double load;
 }
 
-/// Why there is no sound.
+/// Why there is no sound, and what it costs to make it.
 ///
 /// Silence has several very different causes that look identical from the
-/// outside, and on a sideloaded build there is no console to tell them apart.
+/// outside, and a downloaded build has no console to tell them apart.
 /// [callbacks] is the one that splits the problem in half: still zero and the
-/// OS is not asking us for audio at all, so it is the device or the session;
-/// rising while nothing is heard and the fault is downstream of us.
+/// OS is not asking us for audio at all, so it is the device; rising while
+/// nothing is heard and the fault is downstream of us.
 class DroneStatus {
   const DroneStatus({
     required this.started,
@@ -80,6 +81,7 @@ class DroneStatus {
     required this.sampleRate,
     required this.callbacks,
     required this.elapsed,
+    required this.load,
   });
 
   final bool started;
@@ -91,6 +93,10 @@ class DroneStatus {
   final int callbacks;
   final double elapsed;
 
+  /// Share of each audio buffer's own duration that the synthesis spends
+  /// producing it, smoothed. 0.02 is 2% of one core; 1.0 is about to drop out.
+  final double load;
+
   static const unknown = DroneStatus(
     started: false,
     maContext: -999,
@@ -100,6 +106,7 @@ class DroneStatus {
     sampleRate: 0,
     callbacks: 0,
     elapsed: 0,
+    load: 0,
   );
 
   /// One line, short enough for the bottom of the screen and complete enough
@@ -108,6 +115,9 @@ class DroneStatus {
       ' ctx$maContext/init$maDeviceInit/start$maDeviceStart'
       ' st$deviceState ${sampleRate}Hz'
       ' cb$callbacks t${elapsed.toStringAsFixed(1)}';
+
+  @override
+  String toString() => line;
 }
 
 /// A snapshot of what the engine is doing, as plain Dart values.
@@ -175,27 +185,29 @@ typedef _SetTouch = void Function(Pointer<Void>, int, double);
 typedef _SetTouchC = Void Function(Pointer<Void>, Int32, Float);
 typedef _SetSeed = void Function(Pointer<Void>, int);
 typedef _SetSeedC = Void Function(Pointer<Void>, Uint32);
+typedef _GetSeed = int Function(Pointer<Void>);
+typedef _GetSeedC = Uint32 Function(Pointer<Void>);
+typedef _SetPiece = void Function(Pointer<Void>, int, int, double, double);
+typedef _SetPieceC = Void Function(Pointer<Void>, Uint32, Int32, Float, Float);
 typedef _SetDouble = void Function(Pointer<Void>, double);
 typedef _SetDoubleC = Void Function(Pointer<Void>, Double);
 typedef _GetVis = void Function(Pointer<Void>, Pointer<_NeVis>);
 typedef _GetVisC = Void Function(Pointer<Void>, Pointer<_NeVis>);
 typedef _GetStatus = void Function(Pointer<Void>, Pointer<_NeStatus>);
 typedef _GetStatusC = Void Function(Pointer<Void>, Pointer<_NeStatus>);
-typedef _SessionInfo = void Function(Pointer<Uint8>, int);
-typedef _SessionInfoC = Void Function(Pointer<Uint8>, Int32);
 typedef _MoodName = Pointer<Utf8> Function(int);
 typedef _MoodNameC = Pointer<Utf8> Function(Int32);
 typedef _Elapsed = double Function(Pointer<Void>);
 typedef _ElapsedC = Double Function(Pointer<Void>);
 
 DynamicLibrary _open() {
-  if (Platform.isIOS || Platform.isMacOS) {
-    // Where the engine ends up on Apple platforms is CocoaPods' decision, not
-    // ours. Flutter's generated Podfile uses `use_frameworks!`, so the pod
-    // becomes an embedded dynamic framework and its symbols are visible to
-    // dlsym across the whole process; a statically linked pod would put them
-    // in the app binary instead. Probe for the first case rather than assume
-    // it, because assuming wrong is a crash on launch with no useful message.
+  if (Platform.isMacOS) {
+    // Where the engine ends up is CocoaPods' decision, not ours. Flutter's
+    // generated Podfile uses `use_frameworks!`, so the pod becomes an embedded
+    // dynamic framework and its symbols are visible to dlsym across the whole
+    // process; a statically linked pod would put them in the app binary
+    // instead. Probe for the first case rather than assume it, because
+    // assuming wrong is a crash on launch with no useful message.
     final process = DynamicLibrary.process();
     try {
       process.lookup<NativeFunction<_CreateC>>('ne_create');
@@ -204,9 +216,7 @@ DynamicLibrary _open() {
       return DynamicLibrary.open('nulleig.framework/nulleig');
     }
   }
-  if (Platform.isAndroid || Platform.isLinux) {
-    return DynamicLibrary.open('libnulleig.so');
-  }
+  if (Platform.isLinux) return DynamicLibrary.open('libnulleig.so');
   if (Platform.isWindows) return DynamicLibrary.open('nulleig.dll');
   throw UnsupportedError('Null Eigenvalue has no engine for this platform');
 }
@@ -247,6 +257,9 @@ class DroneEngine {
       _lib.lookupFunction<_SetFloatC, _SetFloat>('ne_set_gain');
   late final _setSeed =
       _lib.lookupFunction<_SetSeedC, _SetSeed>('ne_set_seed');
+  late final _getSeed = _lib.lookupFunction<_GetSeedC, _GetSeed>('ne_seed');
+  late final _setPieceFn =
+      _lib.lookupFunction<_SetPieceC, _SetPiece>('ne_set_piece');
   late final _setSleepFn =
       _lib.lookupFunction<_SetDoubleC, _SetDouble>('ne_set_sleep');
   late final _sleepRemainingFn =
@@ -263,19 +276,15 @@ class DroneEngine {
   // Reused so that polling the visuals sixty times a second allocates nothing.
   final Pointer<_NeVis> _visBuf = calloc<_NeVis>();
   final Pointer<_NeStatus> _statusBuf = calloc<_NeStatus>();
-  static const int _sessionCap = 160;
-  final Pointer<Uint8> _sessionBuf = calloc<Uint8>(_sessionCap);
 
   bool _disposed = false;
 
-  /// Opens the audio device. Returns true on success; a device that cannot be
-  /// opened is worth surfacing, because on iOS it means no background
-  /// execution either.
+  /// Opens the audio device. Returns true on success.
   bool startDevice() => !_disposed && _start(_handle) == 0;
 
   /// Closes the device. Not the same as pausing - see [playing]. The app only
-  /// does this on disposal, because a closed device on iOS drops the audio
-  /// session and with it the lock-screen controls.
+  /// does this on disposal; reopening a device on every pause is how you
+  /// collect glitches on the way back in.
   void stopDevice() {
     if (!_disposed) _stop(_handle);
   }
@@ -307,8 +316,36 @@ class DroneEngine {
     if (!_disposed) _setGain(_handle, value.clamp(0.0, 1.0));
   }
 
+  /// Re-seeds every random stream and restarts the piece from silence. Leaves
+  /// the mood and the field alone, which is usually not what you want - see
+  /// [setPiece].
   set seed(int value) {
     if (!_disposed) _setSeed(_handle, value & 0xFFFFFFFF);
+  }
+
+  int get seed => _disposed ? 0 : _getSeed(_handle);
+
+  /// Everything that decides what a piece is, applied together.
+  ///
+  /// The three parts cannot be set separately and mean the same thing: the
+  /// audio thread acts on a reseed at its next control block and draws the
+  /// opening chord out of whatever mood is current then, so setting the mood
+  /// and the seed through their own setters pitches the voices from the mood
+  /// being left behind.
+  void setPiece({
+    required int seed,
+    required int mood,
+    required double x,
+    required double y,
+  }) {
+    if (_disposed) return;
+    _setPieceFn(
+      _handle,
+      seed & 0xFFFFFFFF,
+      mood.clamp(0, neMoodCount - 1),
+      x.clamp(0.0, 1.0),
+      y.clamp(0.0, 1.0),
+    );
   }
 
   double get elapsedSeconds => _disposed ? 0 : _elapsedFn(_handle);
@@ -359,27 +396,12 @@ class DroneEngine {
       sampleRate: s.sampleRate,
       callbacks: s.callbacks,
       elapsed: s.elapsed,
+      load: s.load,
     );
   }
 
   String moodName(int index) =>
       _moodNameFn(index.clamp(0, neMoodCount - 1)).toDartString();
-
-  /// What the OS audio session says about itself: category, output route,
-  /// media volume. Empty everywhere but iOS, and empty against an engine
-  /// binary that predates the symbol - the diagnostics must never be the
-  /// thing that crashes the app they are diagnosing.
-  String sessionInfo() {
-    if (_disposed) return '';
-    final _SessionInfo fn;
-    try {
-      fn = _lib.lookupFunction<_SessionInfoC, _SessionInfo>('ne_session_info');
-    } on ArgumentError {
-      return '';
-    }
-    fn(_sessionBuf, _sessionCap);
-    return _sessionBuf.cast<Utf8>().toDartString();
-  }
 
   void dispose() {
     if (_disposed) return;
@@ -389,6 +411,5 @@ class DroneEngine {
     _handle = nullptr;
     calloc.free(_visBuf);
     calloc.free(_statusBuf);
-    calloc.free(_sessionBuf);
   }
 }

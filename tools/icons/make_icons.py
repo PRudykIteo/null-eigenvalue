@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates the launcher icons for both platforms.
+"""Generates the launcher icons for the three desktops.
 
 The icon is the app: a dark field with one soft orb in it and a thin ring
 around the place the sound comes from. Drawn rather than exported from a design
@@ -12,8 +12,6 @@ one stale 29x29 in it.
 Requires Pillow and numpy.
 """
 
-import json
-import math
 import os
 import sys
 
@@ -74,32 +72,6 @@ def render(size):
     return out.resize((size, size), Image.LANCZOS)
 
 
-IOS_SIZES = [
-    ("Icon-App-20x20@1x.png", 20),
-    ("Icon-App-20x20@2x.png", 40),
-    ("Icon-App-20x20@3x.png", 60),
-    ("Icon-App-29x29@1x.png", 29),
-    ("Icon-App-29x29@2x.png", 58),
-    ("Icon-App-29x29@3x.png", 87),
-    ("Icon-App-40x40@1x.png", 40),
-    ("Icon-App-40x40@2x.png", 80),
-    ("Icon-App-40x40@3x.png", 120),
-    ("Icon-App-60x60@2x.png", 120),
-    ("Icon-App-60x60@3x.png", 180),
-    ("Icon-App-76x76@1x.png", 76),
-    ("Icon-App-76x76@2x.png", 152),
-    ("Icon-App-83.5x83.5@2x.png", 167),
-    ("Icon-App-1024x1024@1x.png", 1024),
-]
-
-ANDROID_SIZES = [
-    ("mipmap-mdpi", 48),
-    ("mipmap-hdpi", 72),
-    ("mipmap-xhdpi", 96),
-    ("mipmap-xxhdpi", 144),
-    ("mipmap-xxxhdpi", 192),
-]
-
 # The names in macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json.
 # Xcode reads that manifest, not the directory, so these have to match it
 # exactly or the build quietly ships a missing icon.
@@ -120,33 +92,6 @@ def main():
             cache[size] = render(size)
         return cache[size]
 
-    ios_dir = os.path.join(
-        ROOT, "ios", "Runner", "Assets.xcassets", "AppIcon.appiconset"
-    )
-    for name, size in IOS_SIZES:
-        get(size).save(os.path.join(ios_dir, name))
-        print("ios", name, size)
-
-    for folder, size in ANDROID_SIZES:
-        d = os.path.join(ROOT, "android", "app", "src", "main", "res", folder)
-        os.makedirs(d, exist_ok=True)
-        get(size).save(os.path.join(d, "ic_launcher.png"))
-        print("android", folder, size)
-
-    # The launch image is the same field, so the app does not flash a white
-    # rectangle on the way in.
-    launch_dir = os.path.join(
-        ROOT, "ios", "Runner", "Assets.xcassets", "LaunchImage.imageset"
-    )
-    for name, size in [
-        ("LaunchImage.png", 256),
-        ("LaunchImage@2x.png", 512),
-        ("LaunchImage@3x.png", 768),
-    ]:
-        get(size).save(os.path.join(launch_dir, name))
-        print("launch", name, size)
-
-    # ---------------------------------------------------------- the desktops
     macos_dir = os.path.join(
         ROOT, "macos", "Runner", "Assets.xcassets", "AppIcon.appiconset"
     )

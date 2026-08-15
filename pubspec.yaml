@@ -1,9 +1,9 @@
 name: null_eigenvalue
-description: "A generative drone instrument. One screen, five moods, no end."
+description: "A generative drone instrument for the desktop. One screen, six moods, no end."
 publish_to: 'none'
 
 # The tag CI cuts on each push to main is derived from this, so the version
-# here is the version on the phone and in the release.
+# here is the version in the release and the one the in-app updater compares.
 version: 0.1.0+1
 
 environment:
@@ -17,10 +17,8 @@ dependencies:
   nulleig:
     path: packages/nulleig
 
-  # Lock screen, Control Centre, notification, headphone buttons, car.
-  audio_service: ^0.18.18
-
-  # Remembers the mood and the field position between launches.
+  # Remembers the mood, the field position, the volume and the liked pieces
+  # between launches.
   shared_preferences: ^2.3.0
 
 dev_dependencies:

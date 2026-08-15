@@ -1,14 +1,13 @@
 # Null Eigenvalue
 
-A generative drone instrument for the phone and the desk. One screen, five
-moods, no end.
+A generative drone instrument for the desktop. One screen, six moods, no end.
 
 It synthesises continuously — nothing is streamed and nothing is a loop — and
-it keeps playing with the screen off, with play, pause and mood change on the
-lock screen.
+every piece it makes has a name you can write down, come back to, and send to
+somebody else.
 
 <p align="center">
-  <img src="ios/Runner/Assets.xcassets/AppIcon.appiconset/Icon-App-1024x1024@1x.png" width="180" alt="">
+  <img src="macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png" width="180" alt="">
 </p>
 
 ---
@@ -24,8 +23,8 @@ Drag anywhere. The screen is a 2D field:
 A fast drag is heard as well as seen: it briefly excites the instrument, so the
 gesture has a sound of its own and not only a result.
 
-Tap once to show the transport and the five moods; it hides itself again after
-a few seconds. While it is silent, tapping anywhere starts it.
+Click once to show the transport and the six moods; it hides itself again after
+a few seconds. While it is silent, clicking anywhere starts it.
 
 **Kernel** is the null space, as low and as still as the thing goes.
 **Manifold** is the warm, wide default. **Halo** is lydian, high, shimmering,
@@ -35,11 +34,7 @@ thirty-second room. **Entropy** is the classic drone — something hums,
 something hisses; the noise bed is the instrument and the pitched voices are
 the accompaniment, on an open fifth with no third in it at all.
 
-From a lock screen, a headphone remote or a car, **next / previous track**
-changes mood.
-
-On a desktop it is the same screen with a pointer instead of a thumb. Moving
-the mouse raises the transport and takes the cursor away again after four
+Moving the mouse raises the transport and takes the cursor away again after four
 seconds of stillness, so a drone left running all evening is the picture and
 nothing else. The keyboard reaches everything:
 
@@ -50,24 +45,26 @@ nothing else. The keyboard reaches everything:
 | arrows | the field |
 | wheel, or `-` / `=` | volume |
 | `F` or `F11` | full screen |
-| `S` | sleep timer |
+| `S` | sleep timer, and everything else behind the gear |
 | `D` | diagnostics |
+| `N` | a new piece |
+| `R` | this piece again from the top |
+| `L` | keep this piece |
+| `C` | copy its name |
 | `esc` | leave full screen, or close the panel |
 
 The same list is behind the gear, beside the sleep durations — a chromeless app
-that also hides its shortcuts is just a locked door. On a Mac the media keys
-and Now Playing work exactly as the lock screen does on a phone; Windows and
-Linux have no equivalent to talk to.
+that also hides its shortcuts is just a locked door.
 
 The gear is where everything the app can be told to do now lives: sleep, level,
-updates and the keys, in two columns on a window wide enough for them. The
+pieces, picture, updates and the keys, in two columns on a window wide enough
+for them. The
 running version sits after the wordmark at the top, at half its weight — an app
 you downloaded has no store page to go and read, so "which one am I running"
 has to be answerable from the app itself.
 
-**Volume** is the desktop's own addition. A phone has a hardware rocker an inch
-from the thumb already holding it; a window is one voice among a dozen other
-things making noise, and the system mixer is several clicks away. The wheel is
+**Volume.** A window is one voice among a dozen other things making noise, and
+the system mixer is several clicks away. The wheel is
 the level — the picture has nothing to scroll, and it is where every other
 player on the machine puts it — with the value appearing under the readout for
 a couple of seconds and then taking itself away again. Behind the gear it is a
@@ -76,31 +73,48 @@ when you want to see the number rather than nudge it. It is the engine's master
 gain, underneath whatever the system says, and it is remembered between
 launches.
 
+## Pieces
+
+Every piece has a name, shown under the frequency and looking like this:
+
+```
+NE1-K7M2-9QRX-4B2F
+```
+
+Give that to somebody with the same version of the app and they hear what you
+heard, from the beginning. `C` copies it, and the field behind the gear takes
+one back — paste the whole message it arrived in if you like, it will find the
+name inside. `N` starts a piece nobody has heard. `R` plays this one again from
+the top. `L` keeps it, and kept pieces are listed behind the gear, one click to
+play.
+
+Twelve characters is enough because a piece is not much information: a 32-bit
+seed, which mood, and where the field was. **All three are in there**, and that
+is the point. The seed alone decides which notes the voices walk to and where
+the bells fall — but the mood decides the scale they walk in, the register and
+half the effects, and the field decides brightness and density, and through
+them the filter, the timbre, how many voices sound at all and how often a bell
+arrives. Two people on the same seed with their pointers in different corners
+are not listening to the same thing.
+
+So the name is a bookmark of all four numbers. Loading one puts the field where
+it was; after that the field is an instrument again, and moving it makes a
+variant — which is what the readout then says, live. There is one honest gap:
+after a mood change the name describes what you would hear if you *started*
+from these settings, which is not quite what is playing, because a mood is
+walked into over a minute rather than cut to. That is deliberate, and it is the
+only thing a name could mean for something with no end.
+
+The `NE1` in front is a version, not decoration. Everything after it is an
+index into the engine's behaviour, so if the harmony weights or a mood's
+parameters ever change, that becomes `NE2` and old names are refused by name
+rather than quietly playing something else.
+
 ## Installing it
 
 Every push to `main` publishes a
 [release](https://github.com/doctorspider42/null-eigenvalue/releases) with all
-five builds.
-
-**iPhone.** The `.ipa` is unsigned. The least painful route is to add this
-source to AltStore once:
-
-```
-https://doctorspider42.github.io/null-eigenvalue/altstore.json
-```
-
-From then on every push to `main` shows up on the phone as an update, with no
-cable and no computer in the loop — CI regenerates that manifest and publishes
-it as part of the same run that builds the release.
-
-Otherwise sign and install the `.ipa` by hand with
-[AltStore](https://altstore.io) or [Sideloadly](https://sideloadly.io) using
-your own Apple ID. A free account works and costs nothing; the app then has to
-be re-signed every seven days, which AltStore does by itself while it is on the
-same network as its desktop half.
-
-**Android.** The `.apk` installs directly. It is signed with a debug key, so
-the phone will ask you to allow installs from wherever you downloaded it.
+three builds.
 
 **Windows.** `NullEigenvalue-Setup.exe` installs into your own profile and
 needs no administrator. It is not signed, so SmartScreen will say it does not
@@ -117,9 +131,9 @@ xattr -dr com.apple.quarantine "/Applications/Null Eigenvalue.app"
 **Linux.** `NullEigenvalue-x86_64.AppImage`. `chmod +x` and run it; it needs
 GTK 3, and finds ALSA, PulseAudio, PipeWire or JACK by itself at run time.
 
-### Updating a desktop build
+### Updating
 
-The three desktop builds ask GitHub what the newest release is — once per
+All three builds ask GitHub what the newest release is — once per
 launch, at most once every six hours, several seconds after the audio is
 already running so a slow network can never be between you and the first
 sound. When there is a newer one, a line appears under the frequency readout;
@@ -191,7 +205,12 @@ an 8-line feedback delay network with a Hadamard mixing matrix for the tail — 
 comb bank rings metallic long before the twenty seconds this needs — with
 per-line damping, modulated line lengths and a pitch-shifted feedback path for
 shimmer, a ping-pong delay, an ensemble chorus, and a bass sum to mono below
-130 Hz because a wide low end collapses on a phone speaker.
+130 Hz to keep the low end from smearing on a small speaker.
+
+Every modulation source in there is a rotating unit vector rather than a call
+to `sin` — there were fifteen of those per sample between the reverb's
+breathing line lengths, the chorus taps and the shimmer windows, all of them
+computing oscillators that run at a fraction of a hertz.
 
 ## How the picture works
 
@@ -202,32 +221,50 @@ voice takes a new pitch, and a point of light flashes for every bell. The
 engine hands the UI eight numbers and a few scalars; there is no FFT and no
 second thread.
 
+What it costs is almost entirely blended pixels — a dozen very large soft
+shapes, several of them bigger than the window — so the two settings behind the
+gear are the two that matter. **Frames per second** is capped at 30 by default:
+nothing here moves faster than a spring settling over a third of a second, and
+on a 144 Hz display the cap alone is most of the app's cost. **Detail** draws
+the field into a smaller image and stretches it back, which scales the cost by
+the square; there is no edge anywhere in this picture to lose. The dither over
+the top is always drawn at full size, and doubles as dither for the upscale.
+
+Turning the diagnostics on with `D` reports both sides: `dsp2.1%` is the share
+of each audio buffer the synthesis spends, and `ui30fps` is what the picture is
+actually managing. Those two numbers are there so that "the app is CPU heavy"
+is a question with an answer rather than a guess.
+
 ## How it is built
 
 ```
 lib/                     the app: one screen, one painter, one controller
-  src/platform.dart        the only file that asks which platform this is
-  src/updater.dart         the desktop builds' way of noticing a new release
+  src/piece.dart           a piece, and the token that names it
+  src/platform.dart        the window, as one switch
+  src/updater.dart         how a downloaded build notices a new release
 packages/nulleig/        the engine
   src/                     C++: synthesis, harmony, effects, and the device
-  ios/Classes/*.mm         forwarders, so CocoaPods compiles src/ into the app
-  macos/                   the same two forwarders and a second podspec
+  macos/                   two forwarders and a podspec
   windows/, linux/         CMake, one target each, same two sources
   lib/nulleig.dart         the FFI binding
 windows/installer/       the Inno Setup script CI compiles
-tools/render/            desktop harness: renders a WAV and measures it
-tools/icons/             regenerates every launcher icon, all five platforms
+tools/render/            offline harness: renders a WAV and measures it
+tools/icons/             regenerates every launcher icon
 ```
 
-The engine is one C++ core compiled five ways: into the iOS app binary by the
-podspec, into a framework by a second podspec for the Mac, into
-`libnulleig.so` by CMake for Android and again for Linux, into `nulleig.dll`
-by CMake for Windows, and into a desktop program that renders WAV files. Audio is produced on the OS audio thread by
-[miniaudio](https://miniaud.io) — Dart is never in the path, which is what lets
-the drone survive a Flutter engine that has been suspended behind a locked
-screen. Dart sets a handful of atomics and reads a few back for the visuals.
+The engine is one C++ core compiled four ways: into a framework by the podspec
+for the Mac, into `libnulleig.so` by CMake for Linux, into `nulleig.dll` by
+CMake for Windows, and into a desktop program that renders WAV files. Audio is
+produced on the OS audio thread by [miniaudio](https://miniaud.io) — Dart is
+never in the path, so a janking or garbage-collecting UI cannot interrupt the
+sound. Dart sets a handful of atomics and reads a few back for the visuals.
 
-### Hearing a change without a phone
+The iOS and Android builds were dropped in favour of doing one platform
+properly; the C++ still compiles for both, and the CI jobs are commented out
+rather than deleted, so the way back is uncommenting them and restoring the
+platform folders from git.
+
+### Hearing a change without opening the app
 
 ```bash
 cmake -S tools/render -B tools/render/build -DCMAKE_BUILD_TYPE=Release
@@ -236,12 +273,14 @@ cmake --build tools/render/build
 ./tools/render/build/nulleig_render tour.wav 360 --tour
 ```
 
-It prints peak, per-second RMS spread, DC offset, a NaN count, a dropout count
-and how often the harmony moved, and exits non-zero if any of those is wrong.
+It prints peak, per-second RMS spread, DC offset, a NaN count, a dropout count,
+how often the harmony moved, and how long the render took as a share of one
+core — which is the honest way to find out what the synthesis costs, with no
+window in the measurement. It exits non-zero if any of those is wrong.
 CI runs it over every mood on each push, and uploads the audio, so a change to
 the DSP can be listened to before it reaches a device.
 
-### Looking at the UI without a phone
+### Looking at the UI without launching it
 
 ```bash
 flutter test tools/preview/preview_test.dart   # writes tools/preview/out/*.png
@@ -253,23 +292,21 @@ which is the point: the field can be put in states that would take twenty
 minutes of listening to catch by accident. (Text comes out as boxes — the test
 environment has no real font. Layout and metrics are still true.)
 
-The last three are shot at the desktop window's size rather than a phone's,
-which is the one thing about that build a portrait preview cannot tell you:
-whether a composition designed for a tall narrow frame still holds when the
-frame is wider than it is tall, and whether the chrome scaled with it.
+The last three are shot at the size the runners open at rather than a narrow
+one, which is the thing a portrait preview cannot tell you: whether a
+composition designed for a tall narrow frame still holds when the frame is
+wider than it is tall, and whether the chrome scaled with it.
 
 ### Building the app
 
 ```bash
 flutter pub get
-flutter build apk --release
-flutter build ios --release --no-codesign
 flutter build windows --release
 flutter build macos --release
 flutter build linux --release
 ```
 
-The desktop builds take `--dart-define=NE_VERSION=0.1.42`; without it the
+They take `--dart-define=NE_VERSION=0.1.42`; without it the
 updater stays quiet, which is what you want while working on the app. On
 Windows, `flutter build` needs Developer Mode turned on — the Flutter tooling
 links each plugin into the build with a symlink, and creating one is a
@@ -282,7 +319,7 @@ start ms-settings:developers
 ## Licence
 
 MIT. Every dependency is permissive: Flutter (BSD-3), miniaudio (public domain
-or MIT-0), `audio_service` (MIT), `shared_preferences` (BSD-3). Nothing here is
+or MIT-0), `shared_preferences` (BSD-3). Nothing here is
 copyleft, so a build of this can be shipped under whatever terms you like.
 
 The desktop version added no dependencies. The window switch and the updater

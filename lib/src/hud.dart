@@ -24,6 +24,10 @@ class Hud extends StatelessWidget {
     this.volumeLabel,
     this.diagnostics,
     this.onDiagnosticsTap,
+    required this.token,
+    required this.liked,
+    required this.onTokenTap,
+    required this.onLike,
   });
 
   final MoodPalette palette;
@@ -33,11 +37,11 @@ class Hud extends StatelessWidget {
   final ValueChanged<int> onMood;
   final VoidCallback onToggle;
 
-  /// How much bigger than the phone this is being drawn. One number for the
-  /// whole HUD: the proportions are the design, and a window is a bigger sheet
-  /// of the same paper rather than an excuse to lay it out again. 1 on a
-  /// phone, and never much past one and a half anywhere - past that the
-  /// chrome starts competing with the picture it is sitting on.
+  /// How much bigger than the base layout this is being drawn. One number for
+  /// the whole HUD: the proportions are the design, and a bigger window is a
+  /// bigger sheet of the same paper rather than an excuse to lay it out again.
+  /// Never much past one and a half - past that the chrome starts competing
+  /// with the picture it is sitting on.
   final double scale;
 
   /// "SLEEP 27:41" while a sleep timer runs, or null. Same register as the
@@ -45,9 +49,9 @@ class Hud extends StatelessWidget {
   /// everyone else.
   final String? sleepLabel;
 
-  /// "UPDATE 0.1.42" when the desktop build has found a newer release, and
-  /// the download's progress after it has been asked for. Null everywhere
-  /// else, which includes every phone and every build that CI did not cut.
+  /// "UPDATE 0.1.42" once a newer release has been found, and the download's
+  /// progress after it has been asked for. Null otherwise, which includes
+  /// every build CI did not cut.
   final String? updateLabel;
   final VoidCallback? onUpdateTap;
 
@@ -61,9 +65,18 @@ class Hud extends StatelessWidget {
 
   /// Shown under the readout when something is wrong with the audio device,
   /// or when the reading is asked for by long-pressing the frequency. There is
-  /// no console on a sideloaded build, so this is the console.
+  /// no console on a downloaded build, so this is the console.
   final String? diagnostics;
   final VoidCallback? onDiagnosticsTap;
+
+  /// The name of the piece playing. Clicking it copies it.
+  final String token;
+
+  /// Whether this exact piece is in the list. The heart is filled when it is.
+  final bool liked;
+
+  final VoidCallback onTokenTap;
+  final VoidCallback onLike;
 
   @override
   Widget build(BuildContext context) {
@@ -78,10 +91,10 @@ class Hud extends StatelessWidget {
         ),
         SizedBox(height: 26 * scale),
         // Dots, not names. Six names at a readable size do not fit across a
-        // phone, and the obvious fixes - a scroller, or two rows - both turn
-        // the one piece of chrome in the app into a menu. A row of dots with
-        // the current name under it fits any width, keeps every mood one tap
-        // away, and stays quiet.
+        // narrow window, and the obvious fixes - a scroller, or two rows -
+        // both turn the one piece of chrome in the app into a menu. A row of
+        // dots with the current name under it fits any width, keeps every mood
+        // one click away, and stays quiet.
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
@@ -129,6 +142,44 @@ class Hud extends StatelessWidget {
               ),
             ),
           ),
+        ),
+        // The name of what is playing, and the one control that turns this
+        // from a generator into a library. It sits directly under the
+        // frequency because the two are the same kind of thing - a reading of
+        // what is currently true - and above everything else here, which is
+        // all either transient or a warning.
+        SizedBox(height: 2 * scale),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onTokenTap,
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: 10 * scale,
+                  vertical: 5 * scale,
+                ),
+                child: Text(
+                  token,
+                  style: TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 10 * scale,
+                    height: 1.2,
+                    letterSpacing: 1.6 * scale,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.white.withValues(alpha: 0.40),
+                  ),
+                ),
+              ),
+            ),
+            _HeartButton(
+              filled: liked,
+              colour: palette.accent,
+              scale: scale,
+              onTap: onLike,
+            ),
+          ],
         ),
         // Above the sleep countdown, because it is the line that is currently
         // moving and the one the reader just asked for.
@@ -318,6 +369,92 @@ class _MoodDot extends StatelessWidget {
   }
 }
 
+/// The one control that turns a generator into a library.
+///
+/// Drawn rather than an icon, for the same reason the transport and the gear
+/// are: a Material heart in this picture looks like a sticker. Outlined until
+/// the piece is in the list, filled once it is, at the same stroke weight as
+/// everything else here.
+class _HeartButton extends StatelessWidget {
+  const _HeartButton({
+    required this.filled,
+    required this.colour,
+    required this.onTap,
+    this.scale = 1,
+  });
+
+  final bool filled;
+  final Color colour;
+  final VoidCallback onTap;
+  final double scale;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: SizedBox(
+        width: 34 * scale,
+        height: 30 * scale,
+        child: CustomPaint(
+          painter: _HeartPainter(
+            filled: filled,
+            colour: filled ? colour : Colors.white.withValues(alpha: 0.34),
+            scale: scale,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HeartPainter extends CustomPainter {
+  _HeartPainter({
+    required this.filled,
+    required this.colour,
+    required this.scale,
+  });
+
+  final bool filled;
+  final Color colour;
+  final double scale;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = 11.0 * scale;
+    final h = 10.0 * scale;
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+
+    // Two arcs meeting at a point. Written out rather than taken from a font
+    // so it sits on the same pixel grid as the dots beside it.
+    final path = Path()
+      ..moveTo(cx, cy + h * 0.42)
+      ..cubicTo(cx - w * 0.62, cy - h * 0.02, cx - w * 0.50, cy - h * 0.58,
+          cx - w * 0.22, cy - h * 0.42)
+      ..cubicTo(cx - w * 0.08, cy - h * 0.34, cx - w * 0.02, cy - h * 0.20,
+          cx, cy - h * 0.12)
+      ..cubicTo(cx + w * 0.02, cy - h * 0.20, cx + w * 0.08, cy - h * 0.34,
+          cx + w * 0.22, cy - h * 0.42)
+      ..cubicTo(cx + w * 0.50, cy - h * 0.58, cx + w * 0.62, cy - h * 0.02,
+          cx, cy + h * 0.42)
+      ..close();
+
+    canvas.drawPath(
+      path,
+      Paint()
+        ..style = filled ? PaintingStyle.fill : PaintingStyle.stroke
+        ..strokeWidth = 1.2 * scale
+        ..strokeJoin = StrokeJoin.round
+        ..color = colour,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _HeartPainter old) =>
+      old.filled != filled || old.colour != colour || old.scale != scale;
+}
+
 class _Transport extends StatelessWidget {
   const _Transport({
     required this.playing,
@@ -447,6 +584,8 @@ class SettingsPanel extends StatelessWidget {
     this.volume,
     this.onVolume,
     this.updates,
+    this.pieces,
+    this.picture,
   });
 
   final Color accent;
@@ -455,20 +594,24 @@ class SettingsPanel extends StatelessWidget {
   final ValueChanged<Duration?> onPick;
   final double scale;
 
+  /// The pieces section: what is playing, how to load one, and the list.
+  final PiecesPanel? pieces;
+
+  /// The two knobs that decide what the picture costs to draw.
+  final PicturePanel? picture;
+
   /// Whether to show the key bindings, which is to say whether there is a
   /// keyboard. Also what decides the two-column layout, since it is the only
   /// section big enough to want one.
   final bool showKeys;
 
-  /// The master level, 0..1, or null to leave the section out entirely - which
-  /// is what a phone does, having a hardware volume control six inches from
-  /// the user's thumb.
+  /// The master level, 0..1, or null to leave the section out entirely.
   final double? volume;
   final ValueChanged<double>? onVolume;
 
-  /// The updates section, or null to leave it out. Null on a phone, and on a
-  /// build CI did not cut - there is nothing there to compare against a
-  /// release, so an "up to date" would be a guess.
+  /// The updates section, or null to leave it out. Null on a build CI did not
+  /// cut - there is nothing there to compare against a release, so an "up to
+  /// date" would be a guess.
   final UpdatePanel? updates;
 
   static const List<int> _minutes = <int>[15, 30, 45, 60, 90];
@@ -482,6 +625,10 @@ class SettingsPanel extends StatelessWidget {
     <String>['F', 'FULL SCREEN'],
     <String>['S', 'THIS PANEL'],
     <String>['D', 'DIAGNOSTICS'],
+    <String>['N', 'NEW PIECE'],
+    <String>['R', 'RESTART PIECE'],
+    <String>['L', 'LIKE THIS PIECE'],
+    <String>['C', 'COPY ITS NAME'],
   ];
 
   @override
@@ -491,7 +638,20 @@ class SettingsPanel extends StatelessWidget {
       children: <Widget>[
         ..._sleepSection(),
         if (volume != null) ...<Widget>[_divider(), ..._volumeSection()],
+        if (picture != null) ...<Widget>[_divider(), ..._pictureSection()],
         if (updates != null) ...<Widget>[_divider(), ..._updatesSection()],
+      ],
+    );
+
+    // Pieces goes in the right-hand column, above the keys. It is the section
+    // with a text field and a list in it, so it wants the width, and putting
+    // it under the sleep durations would push the whole left column past the
+    // bottom of an ordinary window.
+    final right = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        if (pieces != null) ...<Widget>[..._piecesSection(), _divider()],
+        ..._keysSection(),
       ],
     );
 
@@ -508,10 +668,7 @@ class SettingsPanel extends StatelessWidget {
               children: <Widget>[
                 settings,
                 SizedBox(width: 56 * scale),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: _keysSection(),
-                ),
+                right,
               ],
             )
           : settings,
@@ -609,6 +766,135 @@ class SettingsPanel extends StatelessWidget {
         ),
         _note(updates!.status),
       ];
+
+  /// The two knobs that decide what the picture costs to draw.
+  ///
+  /// These are settings rather than something chosen automatically because
+  /// the right answer is a matter of taste and hardware in equal parts: a
+  /// laptop on battery and a desktop with a spare graphics card want different
+  /// numbers, and neither of them is a number this app can guess.
+  List<Widget> _pictureSection() {
+    final p = picture!;
+    return <Widget>[
+      _heading('PICTURE'),
+      SizedBox(height: 12 * scale),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          for (final r in p.rates)
+            _pill(
+              r == 0 ? 'FULL' : '$r',
+              selected: r == p.frameRate,
+              onTap: () => p.onFrameRate(r),
+            ),
+        ],
+      ),
+      _note('FRAMES PER SECOND'),
+      SizedBox(height: 14 * scale),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          for (final s in const <double>[0.5, 0.7, 0.85, 1.0])
+            _pill(
+              '${(s * 100).round()}%',
+              selected: (s - p.renderScale).abs() < 0.01,
+              onTap: () => p.onRenderScale(s),
+            ),
+        ],
+      ),
+      _note('DETAIL'),
+    ];
+  }
+
+  /// What is playing, how to get somewhere else, and the way back.
+  List<Widget> _piecesSection() {
+    final p = pieces!;
+    return <Widget>[
+      _heading('PIECES'),
+      SizedBox(height: 16 * scale),
+      SelectableText(
+        p.token,
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 11 * scale,
+          height: 1.2,
+          letterSpacing: 1.8 * scale,
+          color: accent.withValues(alpha: 0.90),
+        ),
+      ),
+      SizedBox(height: 14 * scale),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          _pill('COPY', selected: false, onTap: p.onCopy),
+          _pill(p.liked ? 'LIKED' : 'LIKE',
+              selected: p.liked, onTap: p.onLike),
+          _pill('NEW', selected: false, onTap: p.onNew),
+        ],
+      ),
+      SizedBox(height: 16 * scale),
+      _TokenField(
+        accent: accent,
+        scale: scale,
+        onSubmit: p.onLoad,
+      ),
+      if (p.entries.isNotEmpty) ...<Widget>[
+        SizedBox(height: 18 * scale),
+        // Bounded, and scrollable inside that bound: the panel is already the
+        // tallest thing in the app and a list that grows without limit would
+        // decide how tall it is.
+        ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: 168 * scale),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                for (final entry in p.entries.reversed)
+                  _LikedRow(
+                    token: entry.token,
+                    mood: entry.mood,
+                    accent: accent,
+                    playing: entry.playing,
+                    scale: scale,
+                    onTap: () => p.onPlay(entry.token),
+                    onRemove: () => p.onRemove(entry.token),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    ];
+  }
+
+  /// A short label in a row of them, rather than the full-width rows the sleep
+  /// durations use. Three or four of these fit on a line where three of those
+  /// would not.
+  Widget _pill(String label,
+      {required bool selected, required VoidCallback onTap}) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: 10 * scale,
+          vertical: 8 * scale,
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11 * scale,
+            height: 1.0,
+            letterSpacing: 2.4 * scale,
+            fontWeight: FontWeight.w400,
+            color: selected
+                ? accent.withValues(alpha: 0.92)
+                : Colors.white.withValues(alpha: 0.32),
+          ),
+        ),
+      ),
+    );
+  }
 
   List<Widget> _keysSection() => <Widget>[
         _heading('KEYS'),
@@ -791,4 +1077,275 @@ class UpdatePanel {
 
   final ValueChanged<bool> onAuto;
   final VoidCallback onCheck;
+}
+
+/// Where a token someone sent you goes.
+///
+/// Stateful for one reason: it has to be able to say "that is not a token".
+/// Silently doing nothing is the worst possible answer here - the user cannot
+/// tell a rejected paste from a piece that happens to sound similar, and the
+/// checksum exists precisely so that the app knows the difference.
+class _TokenField extends StatefulWidget {
+  const _TokenField({
+    required this.accent,
+    required this.onSubmit,
+    this.scale = 1,
+  });
+
+  final Color accent;
+  final bool Function(String) onSubmit;
+  final double scale;
+
+  @override
+  State<_TokenField> createState() => _TokenFieldState();
+}
+
+class _TokenFieldState extends State<_TokenField> {
+  final TextEditingController _text = TextEditingController();
+  bool _rejected = false;
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _submit(String value) {
+    if (value.trim().isEmpty) return;
+    if (widget.onSubmit(value)) {
+      _text.clear();
+      setState(() => _rejected = false);
+    } else {
+      setState(() => _rejected = true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = widget.scale;
+    return SizedBox(
+      width: 250 * scale,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          TextField(
+            controller: _text,
+            onSubmitted: _submit,
+            onChanged: (_) {
+              if (_rejected) setState(() => _rejected = false);
+            },
+            textAlign: TextAlign.center,
+            cursorColor: widget.accent,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11 * scale,
+              letterSpacing: 1.8 * scale,
+              color: Colors.white.withValues(alpha: 0.80),
+            ),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: 'NE1-....-....-....',
+              hintStyle: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11 * scale,
+                letterSpacing: 1.8 * scale,
+                color: Colors.white.withValues(alpha: 0.18),
+              ),
+              contentPadding: EdgeInsets.symmetric(vertical: 8 * scale),
+              // The same hairline the divider and the volume bar use, so the
+              // one place in this app that takes typing still looks like it
+              // belongs to the picture rather than to a form.
+              enabledBorder: UnderlineInputBorder(
+                borderSide: BorderSide(
+                  color: _rejected
+                      ? const Color(0xFFCC6666)
+                      : Colors.white.withValues(alpha: 0.12),
+                ),
+              ),
+              focusedBorder: UnderlineInputBorder(
+                borderSide: BorderSide(
+                  color: _rejected
+                      ? const Color(0xFFCC6666)
+                      : widget.accent.withValues(alpha: 0.60),
+                ),
+              ),
+            ),
+          ),
+          SizedBox(height: 6 * scale),
+          Text(
+            _rejected ? 'NOT A PIECE NAME' : 'PASTE A PIECE',
+            style: TextStyle(
+              fontSize: 9 * scale,
+              height: 1.2,
+              letterSpacing: 2.4 * scale,
+              fontWeight: FontWeight.w300,
+              color: _rejected
+                  ? const Color(0xFFCC6666).withValues(alpha: 0.75)
+                  : Colors.white.withValues(alpha: 0.24),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One liked piece: click the name to play it, the cross to forget it.
+class _LikedRow extends StatelessWidget {
+  const _LikedRow({
+    required this.token,
+    required this.mood,
+    required this.accent,
+    required this.playing,
+    required this.onTap,
+    required this.onRemove,
+    this.scale = 1,
+  });
+
+  final String token;
+  final String mood;
+  final Color accent;
+  final bool playing;
+  final VoidCallback onTap;
+  final VoidCallback onRemove;
+  final double scale;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 6 * scale),
+            child: SizedBox(
+              width: 210 * scale,
+              child: Row(
+                children: <Widget>[
+                  Text(
+                    token,
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 10 * scale,
+                      height: 1.2,
+                      letterSpacing: 1.2 * scale,
+                      color: playing
+                          ? accent.withValues(alpha: 0.90)
+                          : Colors.white.withValues(alpha: 0.42),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    mood.toUpperCase(),
+                    style: TextStyle(
+                      fontSize: 9 * scale,
+                      height: 1.2,
+                      letterSpacing: 1.6 * scale,
+                      fontWeight: FontWeight.w300,
+                      color: Colors.white.withValues(alpha: 0.22),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onRemove,
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: 10 * scale,
+              vertical: 6 * scale,
+            ),
+            child: Text(
+              '×',
+              style: TextStyle(
+                fontSize: 13 * scale,
+                height: 1.0,
+                color: Colors.white.withValues(alpha: 0.26),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// One row of the liked list. Plain values, for the same reason [UpdatePanel]
+/// is: hud.dart does not know what a Piece is and has no reason to learn.
+class LikedEntry {
+  const LikedEntry({
+    required this.token,
+    required this.mood,
+    required this.playing,
+  });
+
+  final String token;
+
+  /// The mood's name, which is most of what tells two of these apart at a
+  /// glance - the token itself is twelve characters of base32 and reads as
+  /// noise until you already know which one you are looking for.
+  final String mood;
+
+  /// Whether this is the piece currently playing.
+  final bool playing;
+}
+
+/// The pieces section, as plain values and callbacks.
+class PiecesPanel {
+  const PiecesPanel({
+    required this.token,
+    required this.liked,
+    required this.entries,
+    required this.onCopy,
+    required this.onLike,
+    required this.onNew,
+    required this.onLoad,
+    required this.onPlay,
+    required this.onRemove,
+  });
+
+  /// The name of what is playing.
+  final String token;
+
+  /// Whether that piece is in [entries].
+  final bool liked;
+
+  final List<LikedEntry> entries;
+
+  final VoidCallback onCopy;
+  final VoidCallback onLike;
+  final VoidCallback onNew;
+
+  /// Takes whatever was typed or pasted. Returns false if it was not a token,
+  /// which is what the field turns into a message rather than silence.
+  final bool Function(String) onLoad;
+
+  final ValueChanged<String> onPlay;
+  final ValueChanged<String> onRemove;
+}
+
+/// What the picture costs, as two numbers the user owns.
+class PicturePanel {
+  const PicturePanel({
+    required this.frameRate,
+    required this.renderScale,
+    required this.rates,
+    required this.onFrameRate,
+    required this.onRenderScale,
+  });
+
+  /// Frames per second, or 0 for whatever the display asks.
+  final int frameRate;
+
+  /// The fraction of the window's pixels the field is drawn at, 0.5..1.
+  final double renderScale;
+
+  final List<int> rates;
+  final ValueChanged<int> onFrameRate;
+  final ValueChanged<double> onRenderScale;
 }

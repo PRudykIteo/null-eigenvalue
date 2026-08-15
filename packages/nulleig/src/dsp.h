@@ -33,6 +33,61 @@ inline float undenorm(float v) {
     return (v > -1e-25f && v < 1e-25f) ? 0.0f : v;
 }
 
+// Pade approximation of tanh, hard-limited past the point where it stops
+// approximating one. Accuracy is irrelevant here; monotonicity, cheapness and
+// actually saturating are not - and the bare rational grows like x/9 rather
+// than flattening, which makes it a shaper but not a safety net. It reaches
+// exactly 1 at x = 3, so the clamp is continuous.
+inline float soft_clip(float x) {
+    if (x >= 3.0f) return 1.0f;
+    if (x <= -3.0f) return -1.0f;
+    const float x2 = x * x;
+    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
+}
+
+// ------------------------------------------------------------- oscillator
+
+// A sine and a cosine of one slowly advancing phase, with no libm call per
+// sample.
+//
+// Every modulation source below used to call std::sin per sample: eight for
+// the reverb's breathing line lengths, three for the chorus taps, two more for
+// the shimmer's crossfade windows. Fifteen library calls per sample, all of
+// them computing oscillators that run at a fraction of a hertz - and together
+// the largest single cost in the graph.
+//
+// Rotating a unit vector by a fixed angle is four multiplies and gives both
+// the sine and the cosine at once. It is exactly amplitude-preserving in real
+// arithmetic and drifts only through rounding, so one Newton step pulls the
+// magnitude back to one. Over 64 samples that drift is below a float's
+// resolution, which is why [renormalise] is a control-rate job and costs
+// nothing.
+struct Quadrature {
+    float s = 0.0f, c = 1.0f;    // sine and cosine of the current phase
+    float cw = 1.0f, sw = 0.0f;  // the per-sample rotation
+
+    void set_rate(float cycles_per_sample) {
+        const float w = kTwoPi * cycles_per_sample;
+        cw = std::cos(w);
+        sw = std::sin(w);
+    }
+    /// `phase` in cycles; need not be wrapped.
+    void set_phase(float phase) {
+        s = std::sin(kTwoPi * phase);
+        c = std::cos(kTwoPi * phase);
+    }
+    inline void advance() {
+        const float ns = s * cw + c * sw;
+        c = c * cw - s * sw;
+        s = ns;
+    }
+    inline void renormalise() {
+        const float g = 1.5f - 0.5f * (s * s + c * c);
+        s *= g;
+        c *= g;
+    }
+};
+
 // --------------------------------------------------------------------- random
 
 // PCG32. Small, fast, and - the reason it is here rather than rand() - it is
@@ -212,8 +267,7 @@ struct Fdn {
     OnePole damp[kLines];
     float hp_z[kLines] = {};
     float base_len[kLines] = {};
-    float mod_phase[kLines] = {};
-    float mod_rate[kLines] = {};
+    Quadrature mod[kLines];
 
     Allpass diffuser[4];
     DelayLine predelay;
@@ -223,6 +277,7 @@ struct Fdn {
     DelayLine shim;
     float shim_pos = 0.0f;
     float shim_len = 0.0f;
+    Quadrature shim_win;
     OnePole shim_lp;
 
     float sr = 48000.0f;
@@ -242,8 +297,8 @@ struct Fdn {
             base_len[i] = ms[i] * 0.001f * sr;
             line[i].prepare((int)(base_len[i] * 2.5f) + 64);
             damp[i].set_cutoff(6000.0f, sr);
-            mod_phase[i] = (float)i * 0.618034f;
-            mod_rate[i] = 0.07f + 0.031f * (float)i;  // Hz, all different
+            mod[i].set_phase((float)i * 0.618034f);
+            mod[i].set_rate((0.07f + 0.031f * (float)i) / sr);  // Hz, all different
             hp_z[i] = 0.0f;
         }
         static const float dms[4] = {13.7f, 19.3f, 27.1f, 34.9f};
@@ -256,7 +311,18 @@ struct Fdn {
         shim_len = 0.09f * sr;
         shim_pos = 0.0f;
         shim_lp.set_cutoff(4200.0f, sr);
+        shim_win.set_rate((shim_ratio - 1.0f) / shim_len);
         set_low_cut(110.0f);
+    }
+
+    // Called once per control block. Pulls the modulation oscillators back
+    // onto the unit circle before rounding can walk them off it, and re-derives
+    // the shimmer window's phase from the read position it has to stay locked
+    // to - which makes the two exactly agree by construction rather than by
+    // both being advanced the same amount and hoping.
+    void tick_control() {
+        for (int i = 0; i < kLines; ++i) mod[i].renormalise();
+        if (shim_len > 0.0f) shim_win.set_phase(shim_pos / shim_len);
     }
 
     void clear() {
@@ -264,10 +330,18 @@ struct Fdn {
             line[i].clear();
             damp[i].reset();
             hp_z[i] = 0.0f;
+            // The modulation phases go back to where prepare() put them, not
+            // merely to zero: a piece that starts from a seed has to start
+            // from the same reverb every time, and "the same" includes where
+            // the line lengths happen to be in their breathing.
+            mod[i].set_phase((float)i * 0.618034f);
         }
         for (int i = 0; i < 4; ++i) diffuser[i].d.clear();
         predelay.clear();
         shim.clear();
+        shim_pos = 0.0f;
+        shim_win.set_phase(0.0f);
+        shim_lp.reset();
     }
 
     void set_low_cut(float hz) {
@@ -293,6 +367,7 @@ struct Fdn {
     void set_shimmer(float amount, float semitones) {
         shim_amt = clampf(amount, 0.0f, 1.0f);
         shim_ratio = std::pow(2.0f, semitones / 12.0f);
+        if (shim_len > 0.0f) shim_win.set_rate((shim_ratio - 1.0f) / shim_len);
     }
 
     // in_l/in_r are the send; out_l/out_r are 100% wet.
@@ -305,9 +380,8 @@ struct Fdn {
 
         float v[kLines];
         for (int i = 0; i < kLines; ++i) {
-            mod_phase[i] += mod_rate[i] / sr;
-            if (mod_phase[i] >= 1.0f) mod_phase[i] -= 1.0f;
-            float wobble = std::sin(kTwoPi * mod_phase[i]) * (base_len[i] * 0.0025f);
+            mod[i].advance();
+            float wobble = mod[i].s * (base_len[i] * 0.0025f);
             v[i] = line[i].read(base_len[i] * size + wobble);
         }
 
@@ -326,14 +400,18 @@ struct Fdn {
 
         float shim_in = 0.0f;
         if (shim_amt > 0.0001f) {
-            // Two windows a half-period apart, cosine-crossfaded.
+            // Two windows a half-period apart, cosine-crossfaded. Being
+            // exactly half a period apart is what makes one cosine enough:
+            // the second window is whatever the first one is not, so the pair
+            // sums to unity for free rather than approximately.
             shim_pos += shim_ratio - 1.0f;
             if (shim_pos >= shim_len) shim_pos -= shim_len;
             float p1 = shim_pos;
             float p2 = shim_pos + shim_len * 0.5f;
             if (p2 >= shim_len) p2 -= shim_len;
-            float w1 = 0.5f - 0.5f * std::cos(kTwoPi * p1 / shim_len);
-            float w2 = 0.5f - 0.5f * std::cos(kTwoPi * p2 / shim_len);
+            shim_win.advance();
+            float w1 = 0.5f - 0.5f * shim_win.c;
+            float w2 = 1.0f - w1;
             float s = shim.read(p1 + 2.0f) * w1 + shim.read(p2 + 2.0f) * w2;
             shim_in = shim_lp.process(s) * shim_amt * 0.7f;
         }
@@ -404,9 +482,10 @@ struct PingPong {
 // oscillators into something that sounds like it has air around it.
 struct Chorus {
     DelayLine dl, dr;
+    Quadrature lfo;
     float sr = 48000.0f;
-    float phase = 0.0f;
-    float rate = 0.19f;
+    float rate = 0.19f;  // Hz; written from the control block
+    float rate_set = -1.0f;
     float depth = 0.5f;
 
     void prepare(float sample_rate) {
@@ -417,15 +496,26 @@ struct Chorus {
     void clear() {
         dl.clear();
         dr.clear();
+        lfo.set_phase(0.0f);
+    }
+    void tick_control() {
+        if (rate != rate_set) {
+            rate_set = rate;
+            lfo.set_rate(rate / sr);
+        }
+        lfo.renormalise();
     }
     inline void process(float in_l, float in_r, float mix, float& out_l, float& out_r) {
-        phase += rate / sr;
-        if (phase >= 1.0f) phase -= 1.0f;
+        lfo.advance();
         float base = 0.012f * sr;
         float span = 0.008f * sr * depth;
-        float m0 = std::sin(kTwoPi * phase);
-        float m1 = std::sin(kTwoPi * (phase + 0.333f));
-        float m2 = std::sin(kTwoPi * (phase + 0.666f));
+        // Three taps a third of a cycle apart. Rotating the same unit vector
+        // by +-120 degrees is an addition each, where three separate sines
+        // were three library calls.
+        const float kCos120 = -0.5f, kSin120 = 0.86602540f;
+        float m0 = lfo.s;
+        float m1 = m0 * kCos120 + lfo.c * kSin120;
+        float m2 = m0 * kCos120 - lfo.c * kSin120;
         dl.write(in_l);
         dr.write(in_r);
         float wl = dl.read(base + span * m0) * 0.6f + dr.read(base * 1.4f + span * m2) * 0.4f;
@@ -449,6 +539,7 @@ struct Limiter {
         at = 1.0f - std::exp(-1.0f / (0.003f * sr));
         rel = 1.0f - std::exp(-1.0f / (1.6f * sr));
     }
+    void reset() { env = 0.0f; }
     inline void process(float& l, float& r) {
         float peak = std::fabs(l) > std::fabs(r) ? std::fabs(l) : std::fabs(r);
         float coef = peak > env ? at : rel;
@@ -458,9 +549,12 @@ struct Limiter {
         l *= g;
         r *= g;
         // A gentle final saturator so a transient between control blocks still
-        // cannot leave the rails.
-        l = std::tanh(l * 1.02f);
-        r = std::tanh(r * 1.02f);
+        // cannot leave the rails. The gain reduction above has already brought
+        // the signal to within a few percent of the ceiling, and over that
+        // range the rational and a real tanh agree to well under a decibel -
+        // so this is the same curve at a fraction of the cost.
+        l = soft_clip(l * 1.02f);
+        r = soft_clip(r * 1.02f);
     }
 };
 

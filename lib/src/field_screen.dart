@@ -10,6 +10,8 @@ import 'package:nulleig/nulleig.dart';
 import 'drone_controller.dart';
 import 'hud.dart';
 import 'nebula.dart';
+import 'palette.dart';
+import 'piece.dart';
 import 'platform.dart';
 import 'textures.dart';
 import 'updater.dart';
@@ -38,6 +40,17 @@ class _FieldScreenState extends State<FieldScreen>
 
   Duration _lastTick = Duration.zero;
   double _idle = 1;
+
+  /// Time banked since the last redraw, and the rate actually achieved.
+  ///
+  /// The ticker fires at the display's refresh rate, which on this kind of
+  /// machine is anything up to 165 Hz. Nothing in this picture moves fast
+  /// enough to need that - the spring settles over a third of a second and
+  /// everything else is measured in tens of seconds - and every one of those
+  /// frames is a dozen very large blended shapes. So the clock still runs at
+  /// vsync and the picture is redrawn on a budget.
+  double _sinceFrame = 0;
+  double _fps = 0;
 
   // Hidden at launch. The painter already draws a large breathing ring with a
   // play glyph in the middle of the field while the app is silent, and the HUD
@@ -81,6 +94,18 @@ class _FieldScreenState extends State<FieldScreen>
   bool _volumeHint = false;
   Timer? _volumeHintTimer;
 
+  /// The token as the chrome last drew it.
+  ///
+  /// It changes with the field, which changes on every pointer move - so it
+  /// cannot come through notifyListeners without rebuilding the tree at the
+  /// frame rate for a string nobody is looking at. Checked here instead, and
+  /// only while there is something on screen showing it.
+  String _tokenShown = '';
+
+  /// Shown for a moment after the token goes to the clipboard.
+  bool _copied = false;
+  Timer? _copiedTimer;
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +113,7 @@ class _FieldScreenState extends State<FieldScreen>
     _state.target = Offset(c.fieldX, 1 - c.fieldY);
     _state.centre = _state.target;
     _state.palette = c.palette;
+    _state.renderScale = c.renderScale;
     c.addListener(_onControllerChanged);
     widget.updater.addListener(_onControllerChanged);
     _ticker = createTicker(_onTick)..start();
@@ -98,6 +124,7 @@ class _FieldScreenState extends State<FieldScreen>
   void dispose() {
     _hudTimer?.cancel();
     _volumeHintTimer?.cancel();
+    _copiedTimer?.cancel();
     _ticker.dispose();
     widget.controller.removeListener(_onControllerChanged);
     widget.updater.removeListener(_onControllerChanged);
@@ -108,14 +135,27 @@ class _FieldScreenState extends State<FieldScreen>
   void _onControllerChanged() => setState(() {});
 
   void _onTick(Duration elapsed) {
-    // Clamped: coming back from the background hands us one enormous frame,
-    // and an unclamped dt there would throw the spring across the screen.
-    final dt =
+    // Clamped: coming back from a minimised window hands us one enormous
+    // frame, and an unclamped dt there would throw the spring across the
+    // screen.
+    final tick =
         ((elapsed - _lastTick).inMicroseconds / 1e6).clamp(0.0, 0.05);
     _lastTick = elapsed;
-    if (dt <= 0) return;
+    if (tick <= 0) return;
 
     final c = widget.controller;
+
+    // Bank the time and redraw on a budget. The simulation is advanced with
+    // the whole banked interval rather than per vsync, so the spring and the
+    // trails move at the same speed whatever the rate is set to - they are
+    // integrated once per drawn frame instead of once per refresh.
+    _sinceFrame += tick;
+    if (c.frameRate > 0 && _sinceFrame < 1.0 / c.frameRate) return;
+    final dt = _sinceFrame;
+    _sinceFrame = 0;
+    // Smoothed, because it is a diagnostic and an instantaneous frame time
+    // reads as a broken counter.
+    _fps += 0.1 * (1.0 / dt - _fps);
     // Rebuilt for as long as a mood crossfade is running. tickBlend moves the
     // palette without notifying - correct for the picture, which re-reads it
     // here every frame, and wrong for the HUD, which only sees it at build
@@ -127,12 +167,18 @@ class _FieldScreenState extends State<FieldScreen>
     if (blending) setState(() {});
     c.syncFromEngine();
     _state.palette = c.palette;
+    _state.renderScale = c.renderScale;
 
-    // Redraw the countdown once a second, and only when someone can see it.
-    final sleepSec = c.sleepRemaining?.inSeconds ?? -1;
-    if (sleepSec != _sleepSecShown && (_hudVisible || _sleepVisible)) {
-      _sleepSecShown = sleepSec;
-      setState(() {});
+    // Redraw the countdown once a second, and the token when it changes -
+    // both only when there is something on screen showing them.
+    if (_hudVisible || _sleepVisible) {
+      final sleepSec = c.sleepRemaining?.inSeconds ?? -1;
+      final token = c.token;
+      if (sleepSec != _sleepSecShown || token != _tokenShown) {
+        _sleepSecShown = sleepSec;
+        _tokenShown = token;
+        setState(() {});
+      }
     }
 
     final wantIdle = c.playing ? 0.0 : 1.0;
@@ -272,6 +318,13 @@ class _FieldScreenState extends State<FieldScreen>
       return KeyEventResult.handled;
     }
 
+    // While the panel is open the keyboard belongs to it. There is a field in
+    // there that takes a pasted piece name, and every shortcut below is a bare
+    // letter - without this, typing a token into it plays six other pieces on
+    // the way. Escape above is the way out, which is where anyone would look
+    // for one anyway.
+    if (_sleepVisible) return KeyEventResult.ignored;
+
     if (key == LogicalKeyboardKey.space) {
       c.toggle();
       _showHud();
@@ -306,6 +359,30 @@ class _FieldScreenState extends State<FieldScreen>
     if (key == LogicalKeyboardKey.keyD) {
       setState(() => _forceDiagnostics = !_forceDiagnostics);
       _showHud();
+      return KeyEventResult.handled;
+    }
+
+    // The piece, as four verbs. Deliberately on the home row rather than
+    // behind the panel: finding a piece worth keeping happens while listening,
+    // and a keepsake you have to open a settings panel to save is one you
+    // mostly do not save.
+    if (key == LogicalKeyboardKey.keyN) {
+      c.newPiece();
+      _showHud();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyR) {
+      c.restartPiece();
+      _showHud();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyL) {
+      c.toggleLike();
+      _showHud();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.keyC) {
+      _copyToken();
       return KeyEventResult.handled;
     }
 
@@ -387,6 +464,53 @@ class _FieldScreenState extends State<FieldScreen>
     });
   }
 
+  // ---------------------------------------------------------------- pieces
+
+  /// The pieces section, as the plain values hud.dart wants. Translating here
+  /// rather than handing the panel a controller keeps the chrome knowing
+  /// nothing about the engine, which is the same split the painter has.
+  PiecesPanel _piecesPanel(DroneController c) {
+    final current = c.token;
+    return PiecesPanel(
+      token: current,
+      liked: c.currentIsLiked,
+      entries: <LikedEntry>[
+        for (final p in c.liked)
+          LikedEntry(
+            token: p.token,
+            mood: MoodPalette.all[p.mood].name,
+            playing: p.token == current,
+          ),
+      ],
+      onCopy: _copyToken,
+      onLike: c.toggleLike,
+      onNew: c.newPiece,
+      onLoad: c.loadToken,
+      onPlay: (t) {
+        final p = Piece.parse(t);
+        if (p != null) c.playPiece(p);
+      },
+      onRemove: (t) {
+        final p = Piece.parse(t);
+        if (p != null) c.removeLiked(p);
+      },
+    );
+  }
+
+  /// Puts the name of what is playing on the clipboard, and says so - the
+  /// clipboard is the one place a user cannot look to check whether something
+  /// happened.
+  void _copyToken() {
+    final token = widget.controller.token;
+    unawaited(Clipboard.setData(ClipboardData(text: token)));
+    _showHud();
+    setState(() => _copied = true);
+    _copiedTimer?.cancel();
+    _copiedTimer = Timer(const Duration(milliseconds: 1800), () {
+      if (mounted) setState(() => _copied = false);
+    });
+  }
+
   Future<void> _toggleFullscreen() async {
     final now = await AppWindow.toggleFullscreen();
     if (mounted) setState(() => _fullscreen = now);
@@ -398,15 +522,13 @@ class _FieldScreenState extends State<FieldScreen>
     final palette = c.palette;
     final media = MediaQuery.of(context);
 
-    // The phone's proportions are the design; a window is simply a bigger
-    // sheet of the same thing. One number, so the transport, the dots and the
-    // lettering all grow together and nothing has to be redrawn by hand.
+    // One number, so the transport, the dots and the lettering all grow
+    // together with the window and nothing has to be redrawn by hand.
     final shortest = media.size.shortestSide;
-    final scale =
-        isDesktop ? (shortest / 620).clamp(1.0, 1.5).toDouble() : 1.0;
+    final scale = (shortest / 620).clamp(1.0, 1.5).toDouble();
 
     // Nothing to point at while the chrome is away, so the pointer goes too.
-    final hideCursor = isDesktop && !_hudVisible && !_sleepVisible;
+    final hideCursor = !_hudVisible && !_sleepVisible;
 
     // The HUD stands down while the panel is open. It was always dead under
     // there - the panel's scrim is opaque to hits, so a tap on the transport
@@ -432,7 +554,9 @@ class _FieldScreenState extends State<FieldScreen>
                   state: _state,
                   textures: widget.textures,
                 ),
-                isComplex: true,
+                // Not isComplex: that asks the raster cache to consider
+                // keeping the picture, and a picture that is different every
+                // time it is drawn can only ever be cached and thrown away.
                 willChange: true,
               ),
             ),
@@ -468,16 +592,15 @@ class _FieldScreenState extends State<FieldScreen>
                         color: Colors.white.withValues(alpha: 0.34),
                       ),
                     ),
-                    if (_versionLabel != null)
-                      Text(
-                        _versionLabel!,
-                        style: TextStyle(
-                          fontSize: 10 * scale,
-                          letterSpacing: 2.4 * scale,
-                          fontWeight: FontWeight.w300,
-                          color: Colors.white.withValues(alpha: 0.18),
-                        ),
+                    Text(
+                      _versionLabel,
+                      style: TextStyle(
+                        fontSize: 10 * scale,
+                        letterSpacing: 2.4 * scale,
+                        fontWeight: FontWeight.w300,
+                        color: Colors.white.withValues(alpha: 0.18),
                       ),
+                    ),
                   ],
                 ),
               ),
@@ -526,9 +649,18 @@ class _FieldScreenState extends State<FieldScreen>
                     sleepLabel: _sleepLabel(c),
                     updateLabel: _updateLabel(),
                     onUpdateTap: _onUpdateTap,
-                    volumeLabel: _volumeHint
-                        ? 'VOLUME ${(c.volume * 100).round()}%'
-                        : null,
+                    volumeLabel: _copied
+                        ? 'COPIED'
+                        : _volumeHint
+                            ? 'VOLUME ${(c.volume * 100).round()}%'
+                            : null,
+                    token: c.token,
+                    liked: c.currentIsLiked,
+                    onTokenTap: _copyToken,
+                    onLike: () {
+                      c.toggleLike();
+                      _restartHudTimer();
+                    },
                     diagnostics: _diagnostics(c),
                     onDiagnosticsTap: () {
                       setState(() => _forceDiagnostics = !_forceDiagnostics);
@@ -569,11 +701,17 @@ class _FieldScreenState extends State<FieldScreen>
                         remaining: c.sleepRemaining,
                         choice: c.sleepChoice,
                         scale: scale,
-                        showKeys: isDesktop,
-                        // A phone has a hardware volume rocker an inch from
-                        // the thumb already holding it; a window does not.
-                        volume: isDesktop ? c.volume : null,
+                        showKeys: true,
+                        volume: c.volume,
                         onVolume: c.setVolume,
+                        pieces: _piecesPanel(c),
+                        picture: PicturePanel(
+                          frameRate: c.frameRate,
+                          renderScale: c.renderScale,
+                          rates: DroneController.frameRates,
+                          onFrameRate: c.setFrameRate,
+                          onRenderScale: c.setRenderScale,
+                        ),
                         // Only where there is a version to compare. A build
                         // CI did not cut would be claiming to be up to date
                         // on no evidence at all.
@@ -600,12 +738,9 @@ class _FieldScreenState extends State<FieldScreen>
       ),
     );
 
-    if (!isDesktop) return screen;
-
-    // Desktop only, and in this order: the pointer layer has to be inside the
-    // focus layer, or a click on the picture would move focus off the node
-    // that owns the keyboard and the shortcuts would go dead after the first
-    // drag.
+    // In this order: the pointer layer has to be inside the focus layer, or a
+    // click on the picture would move focus off the node that owns the
+    // keyboard and the shortcuts would go dead after the first drag.
     return Focus(
       autofocus: true,
       onKeyEvent: _onKey,
@@ -646,16 +781,10 @@ class _FieldScreenState extends State<FieldScreen>
     return h > 0 ? 'SLEEP $h:$mm:$ss' : 'SLEEP $m:$ss';
   }
 
-  /// What to draw after the wordmark, or null where there is nothing worth
-  /// drawing.
-  ///
-  /// Desktop only. CI bakes NE_VERSION into those builds because they are
-  /// downloaded rather than installed from a store and there is no store page
-  /// to go and read; a phone would have nothing here but the word DEV.
-  String? get _versionLabel {
-    if (!isDesktop) return null;
-    return buildVersion.isEmpty ? '  DEV' : '  $buildVersion';
-  }
+  /// What to draw after the wordmark. CI bakes NE_VERSION into release builds
+  /// because they are downloaded rather than installed from a store, and there
+  /// is no store page to go and read.
+  String get _versionLabel => buildVersion.isEmpty ? '  DEV' : '  $buildVersion';
 
   /// One line about the newer version, in the same whisper as everything else
   /// down there. Null - which is almost always - means the app says nothing
@@ -717,15 +846,13 @@ class _FieldScreenState extends State<FieldScreen>
 
   /// The lines to show under the readout, or null to show nothing.
   ///
-  /// It appears on its own when the audio is demonstrably not working, and can
-  /// be summoned by long-pressing the frequency. The states it has to tell
-  /// apart: a device that never opened, a device that opened but is never
-  /// asked for audio, a synthesizer that is being asked and is returning
-  /// silence, and - the one the first line cannot see - a synthesizer whose
-  /// sound leaves the callback and then goes somewhere nobody is listening.
-  /// Hence the second line: the engine's own play flag, gate and output level
-  /// split "silence is ours" from "silence is downstream", and the session's
-  /// category / route / media volume say where downstream actually points.
+  /// It appears on its own when the audio is demonstrably not working, and on
+  /// demand via the D key. The states it has to tell apart: a device that
+  /// never opened, a device that opened but is never asked for audio, and a
+  /// synthesizer that is being asked and is returning silence. Hence the
+  /// second line - the engine's own play flag, gate and output level split
+  /// "silence is ours" from "silence is downstream" - and `load`, which is the
+  /// share of each audio buffer's worth of time the synthesis actually spends.
   String? _diagnostics(DroneController c) {
     final wanted = _forceDiagnostics ||
         !c.deviceOk ||
@@ -734,16 +861,15 @@ class _FieldScreenState extends State<FieldScreen>
     if (!wanted) return null;
 
     final v = _state.vis;
-    final ms = c.mediaSessionOk;
     final second = <String>[
       'play${c.enginePlaying ? 1 : 0}',
       'gate${v.gate.toStringAsFixed(2)}',
       'lvl${v.level.toStringAsFixed(3)}',
       'cb/s${_cbPerSec.round()}',
-      if (ms != null) 'ms${ms ? 1 : 0}',
+      'dsp${(_status.load * 100).toStringAsFixed(1)}%',
+      'ui${_fps.round()}fps',
     ].join(' ');
-    final session = c.sessionInfo();
-    return '${_status.line}\n$second${session.isEmpty ? '' : '\n$session'}';
+    return '${_status.line}\n$second';
   }
 }
 

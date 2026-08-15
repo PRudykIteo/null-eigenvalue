@@ -1,6 +1,6 @@
-// A desktop harness for the engine. There is no phone in this loop: it renders
-// the same synthesizer offline, writes a WAV and measures it, which is how the
-// DSP gets checked at all on a machine with no Xcode and no Android SDK.
+// A desktop harness for the engine: it renders the synthesizer offline, writes
+// a WAV and measures it, which is how the DSP gets checked without opening an
+// audio device or a window.
 //
 //   nulleig_render out.wav 300              300 s of the default mood
 //   nulleig_render out.wav 300 --mood 2     Halo
@@ -10,7 +10,12 @@
 // It always prints a report. A render that peaks at 0.99, or whose loudest
 // second is nine times its quietest, or that contains a NaN, is a bug whether
 // or not anyone was listening.
+//
+// The report also times itself, because "the app is CPU heavy" is a claim
+// about either the synthesis or the picture and there is no way to tell them
+// apart by looking at Task Manager. This measures exactly one of the two.
 
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -105,6 +110,11 @@ int main(int argc, char** argv) {
     double dc_l = 0.0, dc_r = 0.0;
     int last_chord = -1, chord_moves = 0;
 
+    // Only ne_render is inside the clock. The WAV accumulation and the
+    // per-sample statistics around it are the harness's own cost and would
+    // flatter or slander the engine depending on the day.
+    double render_seconds = 0.0;
+
     ne_vis vis;
     for (int64_t n = 0; n < total; n += block) {
         int frames = (int)((total - n < block) ? (total - n) : block);
@@ -121,7 +131,12 @@ int main(int argc, char** argv) {
             ne_set_touch(e, (fmod(t, 40.0) < 6.0) ? 1 : 0, 1.4f);
         }
 
+        const auto t0 = std::chrono::steady_clock::now();
         ne_render(e, buf.data(), frames);
+        render_seconds +=
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+                .count();
+
         for (int i = 0; i < frames; ++i) {
             float l = buf[(size_t)i * 2], r = buf[(size_t)i * 2 + 1];
             if (!std::isfinite(l) || !std::isfinite(r)) nonfinite++;
@@ -177,6 +192,17 @@ int main(int argc, char** argv) {
            chord_moves * 60.0 / a.seconds);
     printf("  final vis   level %.3f centroid %.3f root %.1f Hz motion %.3f\n", vis.level,
            vis.centroid, vis.root_hz, vis.motion);
+
+    // The whole point of the line: `load` is what one core would have to spend
+    // to keep this synthesizer running live. Anything under a few percent
+    // means a complaint about the app being CPU heavy is a complaint about
+    // the picture.
+    const double audio_seconds = (double)n_total / rate;
+    const double load = render_seconds / audio_seconds;
+    printf("  cpu         %.3f s to render %.0f s of audio"
+           "  (%.0fx realtime, %.2f%% of one core)\n",
+           render_seconds, audio_seconds, load > 0.0 ? 1.0 / load : 0.0,
+           load * 100.0);
 
     int bad = (worst > 0.995) + (nonfinite > 0) + (silent_secs > 3) +
               (fabs(dc_l / n_total) > 0.01);

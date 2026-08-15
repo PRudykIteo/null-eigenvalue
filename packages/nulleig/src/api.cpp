@@ -1,29 +1,17 @@
 // api.cpp - the flat C surface Dart calls, plus the audio device.
 //
-// The device lives here rather than on the Dart side on purpose. Everything
-// that matters about this app happens with the screen off: iOS keeps the
-// process alive only while an audio session is actually producing samples, and
-// a Flutter engine in the background is not a place to be generating them
-// from. Owning the device natively means the render callback is the OS's
-// audio thread talking straight to the synthesizer, with Dart nowhere in the
-// path - it can be paused, janked or garbage-collecting and the drone does not
-// notice.
+// The device lives here rather than on the Dart side on purpose: the render
+// callback is the OS's audio thread talking straight to the synthesizer, with
+// Dart nowhere in the path - it can be janked or garbage-collecting and the
+// drone does not notice.
 
 #include "nulleig.h"
 
 #include <atomic>
-#include <cstdio>
 #include <cstdlib>
 #include <new>
 
 #include "engine.h"
-
-#if defined(__APPLE__)
-#include <TargetConditionals.h>
-#if TARGET_OS_IPHONE && defined(__OBJC__)
-#import <AVFoundation/AVFoundation.h>
-#endif
-#endif
 
 #ifdef NE_WITH_MINIAUDIO
 #include <chrono>
@@ -53,6 +41,11 @@ struct Holder {
     std::atomic<int> r_device_start{-999};
     std::atomic<int> started{0};
     std::atomic<unsigned int> callbacks{0};
+    // Share of each buffer's own duration that render() spends producing it.
+    // The number that decides whether "the app is CPU heavy" is a question
+    // about the synthesis or about the picture - and until it is on screen,
+    // that question gets answered by guessing.
+    std::atomic<float> load{0.0f};
 #ifdef NE_WITH_MINIAUDIO
     ma_context context{};
     ma_device device{};
@@ -71,7 +64,26 @@ void data_callback(ma_device* dev, void* out, const void* in, ma_uint32 frames) 
     Holder* h = (Holder*)dev->pUserData;
     if (h == nullptr) return;
     h->callbacks.fetch_add(1, std::memory_order_relaxed);
+
+    const auto t0 = std::chrono::steady_clock::now();
     h->engine.render((float*)out, (int)frames);
+    const auto t1 = std::chrono::steady_clock::now();
+
+    // A clock read either side of the render is about forty nanoseconds
+    // against a twenty-millisecond buffer, so measuring this costs nothing
+    // worth measuring.
+    const double sr = (double)dev->sampleRate;
+    if (sr > 0.0 && frames > 0) {
+        const double spent =
+            std::chrono::duration<double>(t1 - t0).count();
+        const double budget = (double)frames / sr;
+        const float now = (float)(spent / budget);
+        // Smoothed over about a second of callbacks. An instantaneous figure
+        // swings between 0.2% and 8% depending on where the control block
+        // lands, which reads as a broken meter rather than as a load.
+        float prev = h->load.load(std::memory_order_relaxed);
+        h->load.store(prev + 0.05f * (now - prev), std::memory_order_relaxed);
+    }
 }
 
 // The device is restarted from here rather than from the notification
@@ -129,25 +141,6 @@ NE_API int ne_start(ne_engine* e) {
 
     if (!h->context_ok) {
         ma_context_config cfg = ma_context_config_init();
-        // Playback, not ambient: this is the app's reason to be running, it
-        // should interrupt whatever was playing, it must ignore the ringer
-        // switch, and - the part that actually matters - only the playback
-        // category keeps the process alive with the screen off.
-        //
-        // The AppDelegate sets the same category and activates the session
-        // before Flutter starts, so this is a second, agreeing voice rather
-        // than a competing one. Both saying "playback" means the order they
-        // run in cannot change the answer.
-        cfg.coreaudio.sessionCategory = ma_ios_session_category_playback;
-        // No category options. AllowBluetoothA2DP and AllowAirPlay are
-        // documented as valid only with playAndRecord - with playback both
-        // routes are already allowed by default, so at best the flags are
-        // noise and at worst they are the reason setCategory refuses on some
-        // OS version, which here would surface as ctx failing.
-        cfg.coreaudio.sessionCategoryOptions = 0;
-        // Leave the session active when the device is torn down. Deactivating
-        // it is what makes the lock-screen controls disappear.
-        cfg.coreaudio.noAudioSessionDeactivate = MA_TRUE;
         int r = (int)ma_context_init(nullptr, 0, &cfg, &h->context);
         h->r_context.store(r, std::memory_order_relaxed);
         if (r != MA_SUCCESS) return -2;
@@ -161,9 +154,8 @@ NE_API int ne_start(ne_engine* e) {
         cfg.sampleRate = (ma_uint32)h->engine.sample_rate();
         cfg.dataCallback = data_callback;
         cfg.pUserData = h;
-        // ~20 ms. Long enough that a scheduling hiccup on a phone cannot
-        // starve it, short enough that dragging a finger still feels connected
-        // to the sound.
+        // ~20 ms. Long enough that a scheduling hiccup cannot starve it, short
+        // enough that dragging a finger still feels connected to the sound.
         cfg.periodSizeInMilliseconds = 20;
         cfg.performanceProfile = ma_performance_profile_conservative;
         int r = (int)ma_device_init(&h->context, &cfg, &h->device);
@@ -234,6 +226,15 @@ NE_API void ne_set_gain(ne_engine* e, float gain) {
 NE_API void ne_set_seed(ne_engine* e, uint32_t seed) {
     if (e) ((Holder*)e)->engine.set_seed(seed);
 }
+NE_API uint32_t ne_seed(const ne_engine* e) {
+    return e ? ((const Holder*)e)->engine.seed() : 0u;
+}
+NE_API void ne_set_piece(ne_engine* e, uint32_t seed, int mood, float x, float y) {
+    if (!e) return;
+    if (mood < 0) mood = 0;
+    if (mood >= NE_MOOD_COUNT) mood = NE_MOOD_COUNT - 1;
+    ((Holder*)e)->engine.set_piece(seed, mood, x, y);
+}
 NE_API void ne_set_sleep(ne_engine* e, double seconds) {
     if (e) ((Holder*)e)->engine.set_sleep(seconds);
 }
@@ -257,6 +258,7 @@ NE_API void ne_get_status(ne_engine* e, ne_status* out) {
     out->ma_device_start = h->r_device_start.load(std::memory_order_relaxed);
     out->callbacks = h->callbacks.load(std::memory_order_relaxed);
     out->elapsed = h->engine.elapsed();
+    out->load = h->load.load(std::memory_order_relaxed);
     out->sample_rate = h->engine.sample_rate();
 #ifdef NE_WITH_MINIAUDIO
     out->device_state = h->device_ok ? (int)ma_device_get_state(&h->device) : -1;
@@ -265,43 +267,6 @@ NE_API void ne_get_status(ne_engine* e, ne_status* out) {
     out->device_state = -1;
 #endif
 }
-NE_API void ne_session_info(char* out, int cap) {
-    if (out == nullptr || cap <= 0) return;
-    out[0] = '\0';
-#if defined(__APPLE__) && TARGET_OS_IPHONE && defined(__OBJC__)
-    // Compiled as Objective-C++ on iOS (the pod pulls this file in through an
-    // .mm forwarder), so the session can simply be asked. Everything here is
-    // a read; nothing below can change the audio state.
-    @autoreleasepool {
-        AVAudioSession* session = [AVAudioSession sharedInstance];
-        NSString* c = session.category;
-        const char* cat = "othercat";
-        if ([c isEqualToString:AVAudioSessionCategoryPlayback]) {
-            cat = "playback";
-        } else if ([c isEqualToString:AVAudioSessionCategoryAmbient]) {
-            cat = "ambient";
-        } else if ([c isEqualToString:AVAudioSessionCategorySoloAmbient]) {
-            cat = "soloambient";
-        } else if ([c isEqualToString:AVAudioSessionCategoryPlayAndRecord]) {
-            cat = "playandrecord";
-        }
-        NSMutableArray<NSString*>* ports = [NSMutableArray array];
-        for (AVAudioSessionPortDescription* p in session.currentRoute.outputs) {
-            [ports addObject:p.portType];
-        }
-        // Port types read well raw: "Speaker", "Headphones",
-        // "BluetoothA2DPOutput", "AirPlay". No route at all is itself a
-        // diagnosis - an active session should always have one.
-        NSString* route =
-            ports.count ? [ports componentsJoinedByString:@"+"] : @"noroute";
-        std::snprintf(out, (size_t)cap, "%s %s vol%.2f%s", cat,
-                      route.UTF8String, (double)session.outputVolume,
-                      session.otherAudioPlaying ? " other" : "");
-        out[cap - 1] = '\0';
-    }
-#endif
-}
-
 NE_API const char* ne_mood_name(int mood) { return ne::mood_at(mood).name; }
 NE_API double ne_elapsed(const ne_engine* e) {
     return e ? ((const Holder*)e)->engine.elapsed() : 0.0;

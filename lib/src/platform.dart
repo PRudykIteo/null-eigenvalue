@@ -1,26 +1,4 @@
-import 'dart:io';
-
 import 'package:flutter/services.dart';
-
-/// The three desktops, as one question.
-///
-/// The app is one screen on every platform and this file is deliberately the
-/// only place that asks which one it is running on. What actually differs is
-/// small: a phone has orientation and system bars, a desktop has a window, a
-/// pointer that hovers and a keyboard.
-bool get isDesktop => Platform.isWindows || Platform.isMacOS || Platform.isLinux;
-
-bool get isMobile => Platform.isAndroid || Platform.isIOS;
-
-/// Whether `audio_service` has an implementation here.
-///
-/// It ships Android, iOS and macOS. On the Mac that is worth having: it puts
-/// the mood in Now Playing and makes the F7/F8/F9 media keys change mood and
-/// pause, exactly as the lock screen does on a phone. Windows and Linux have
-/// no such plugin, and asking anyway costs eight seconds of startup waiting
-/// for a channel nobody is answering.
-bool get hasMediaSession =>
-    Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
 
 /// The window, as far as this app cares about it: one switch.
 ///
@@ -44,7 +22,6 @@ class AppWindow {
   static Future<bool> toggleFullscreen() => setFullscreen(!_fullscreen);
 
   static Future<bool> setFullscreen(bool value) async {
-    if (!isDesktop) return false;
     try {
       final result = await _channel.invokeMethod<bool>(
         'setFullscreen',

@@ -5,13 +5,6 @@
 namespace ne {
 namespace {
 
-// Pade approximation of tanh. Used for the drive stage and nothing else;
-// accuracy is irrelevant, monotonicity and cheapness are not.
-inline float soft(float x) {
-    float x2 = x * x;
-    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
-}
-
 // Equal-power pan, -1 hard left .. +1 hard right.
 inline void pan_gains(float p, float& l, float& r) {
     float a = (clampf(p, -1.0f, 1.0f) + 1.0f) * 0.25f * kTwoPi * 0.5f;
@@ -176,17 +169,49 @@ void Engine::reseed(uint32_t seed) {
         voice_[i].cur_midi = voice_[i].target_midi = root_cur_ + (float)voice_[i].offset;
     }
 
+    // Everything downstream of the voices, back to where it was at
+    // construction. A seed is a promise that the piece will be the same one,
+    // and a promise that stops at the oscillators is not worth much: an
+    // instrument reseeded into a thirty-second reverb tail opens into that
+    // tail, and the first minute - the part anyone actually compares - is the
+    // part it is audible in.
     filt_l_.reset();
     filt_r_.reset();
     chorus_.clear();
     delay_.clear();
     reverb_.clear();
+    limiter_.reset();
+    tilt_l_.lp.reset();
+    tilt_r_.lp.reset();
+    bass_l_.reset();
+    bass_r_.reset();
+    air_svf_l_.reset();
+    air_svf_r_.reset();
+    air_lp_l_.reset();
+    air_lp_r_.reset();
+    air_phase_ = 0.0f;
+
     gate_ = 0.0f;
     exc_ = 0.0f;
     motion_ = 0.0f;
     spark_ = 0.0f;
     peak_ = 0.0f;
     rev_decay_cur_ = rev_size_cur_ = -1.0f;
+
+    // The weather is 1/f noise stepped four times a second and then smoothed
+    // over tens of seconds, so its smoothers hold minutes of history. Placing
+    // them on the reseeded walk's first value starts the piece in its own
+    // weather rather than in the previous piece's.
+    weather_div_ = 0;
+    w_bright_.reset(weather_bright_.step());
+    w_dense_.reset(weather_dense_.step());
+    w_space_.reset(weather_space_.step());
+
+    for (int i = 0; i < NE_BANDS; ++i) v_band_[i].store(0.0f, std::memory_order_relaxed);
+
+    // The parameter smoothers cannot be dealt with here: they are driven from
+    // the field, which the control block has not read yet. See smooth().
+    prime_ = true;
 }
 
 void Engine::apply_mood(const Mood& m) {
@@ -335,15 +360,21 @@ void Engine::control_block() {
     const float dt = (float)kControlBlock / sr_;
 
     // ---- incoming ---------------------------------------------------------
-    uint32_t reseed_ticket = p_reseed_.load(std::memory_order_relaxed);
-    if (reseed_ticket != reseed_seen_) {
-        reseed_seen_ = reseed_ticket;
-        reseed(p_seed_.load(std::memory_order_relaxed));
-    }
     int want_mood = p_mood_.load(std::memory_order_relaxed);
     if (want_mood < 0) want_mood = 0;
     if (want_mood >= kMoodCount) want_mood = kMoodCount - 1;
-    if (want_mood != mood_cur_) {
+
+    uint32_t reseed_ticket = p_reseed_.load(std::memory_order_relaxed);
+    if (reseed_ticket != reseed_seen_) {
+        // The mood goes in *before* the seed is used, not after. reseed()
+        // draws the opening chord out of the current mood's scale and sets the
+        // register each voice will wander in, so taking the new mood second
+        // would pitch every voice from the scale being left behind and then
+        // change the scale underneath them.
+        reseed_seen_ = reseed_ticket;
+        mood_cur_ = want_mood;
+        reseed(p_seed_.load(std::memory_order_relaxed));
+    } else if (want_mood != mood_cur_) {
         mood_cur_ = want_mood;
         root_walk_ = 0;
         apply_mood(mood_at(mood_cur_));
@@ -380,28 +411,28 @@ void Engine::control_block() {
     float dense = clampf(fy + 0.18f * w_dense_.z, 0.0f, 1.0f);
     float space = clampf(0.5f + 0.5f * w_space_.z, 0.0f, 1.0f);
 
-    s_bright_.process(bright);
-    s_dense_.process(dense);
+    smooth(s_bright_, bright);
+    smooth(s_dense_, dense);
 
     float b = s_bright_.z, d = s_dense_.z;
 
     float cutoff = m.cutoff_lo * std::pow(m.cutoff_hi / m.cutoff_lo, std::pow(b, 1.25f));
     cutoff *= 1.0f + 0.35f * exc_;
-    s_cutoff_.process(clampf(cutoff, 60.0f, sr_ * 0.45f));
-    s_res_.process(0.12f + 0.30f * b);
-    s_morph_.process(clampf(m.morph + m.morph_span * (b - 0.42f) * 2.0f, 0.0f, 3.0f));
-    s_air_.process(m.air * (0.35f + 1.1f * b));
-    s_drive_.process(m.drive * (0.7f + 0.6f * b));
-    s_chorus_.process(m.chorus * (0.75f + 0.5f * d));
-    s_tilt_.process(clampf(m.tilt + 0.5f * (b - 0.5f), -1.0f, 1.0f));
-    s_rev_mix_.process(clampf(m.rev_mix * (0.78f + 0.42f * (1.0f - d)) * (0.85f + 0.3f * space),
+    smooth(s_cutoff_, clampf(cutoff, 60.0f, sr_ * 0.45f));
+    smooth(s_res_, 0.12f + 0.30f * b);
+    smooth(s_morph_, clampf(m.morph + m.morph_span * (b - 0.42f) * 2.0f, 0.0f, 3.0f));
+    smooth(s_air_, m.air * (0.35f + 1.1f * b));
+    smooth(s_drive_, m.drive * (0.7f + 0.6f * b));
+    smooth(s_chorus_, m.chorus * (0.75f + 0.5f * d));
+    smooth(s_tilt_, clampf(m.tilt + 0.5f * (b - 0.5f), -1.0f, 1.0f));
+    smooth(s_rev_mix_, clampf(m.rev_mix * (0.78f + 0.42f * (1.0f - d)) * (0.85f + 0.3f * space),
                               0.0f, 0.85f));
-    s_dly_mix_.process(m.delay_mix * (0.55f + 0.75f * d));
-    s_shimmer_.process(m.shimmer * (0.5f + 0.8f * b));
-    s_bell_rate_.process(m.bell_per_min * (0.22f + 1.9f * d) * (0.35f + 1.0f * b) *
-                         (1.0f + 3.0f * exc_));
-    s_gain_.process(p_gain_.load(std::memory_order_relaxed));
-    s_tone_.process(7.0f + 20.0f * b);
+    smooth(s_dly_mix_, m.delay_mix * (0.55f + 0.75f * d));
+    smooth(s_shimmer_, m.shimmer * (0.5f + 0.8f * b));
+    smooth(s_bell_rate_, m.bell_per_min * (0.22f + 1.9f * d) * (0.35f + 1.0f * b) *
+                             (1.0f + 3.0f * exc_));
+    smooth(s_gain_, p_gain_.load(std::memory_order_relaxed));
+    smooth(s_tone_, 7.0f + 20.0f * b);
 
     cutoff_ = s_cutoff_.z;
     res_ = s_res_.z;
@@ -466,6 +497,11 @@ void Engine::control_block() {
     reverb_.set_diffusion(0.55f + 0.35f * d);
     reverb_.set_shimmer(shimmer_, 12.0f);
     rev_predelay_ = (0.02f + 0.05f * space) * sr_;
+
+    // The modulation oscillators inside both are rotations rather than sine
+    // calls, and this is where they are pulled back onto the unit circle.
+    reverb_.tick_control();
+    chorus_.tick_control();
 
     // Air bed: a resonant band whose centre wanders a couple of octaves.
     air_phase_ += 0.021f * dt;
@@ -574,6 +610,10 @@ void Engine::control_block() {
     motion_ -= motion_ * (1.0f - std::exp(-dt / 12.0f));
     spark_ -= spark_ * (1.0f - std::exp(-dt / 0.55f));
     publish_vis();
+
+    // Every smoother is now sitting on its target rather than a block away
+    // from it, so the piece is fully described from here on.
+    prime_ = false;
 }
 
 void Engine::publish_vis() {
@@ -679,8 +719,8 @@ void Engine::render(float* out, int frames) {
 
             // -------- drive and master filter
             if (drive_ > 1e-4f) {
-                l += drive_ * (soft(l * 2.6f) - l);
-                r += drive_ * (soft(r * 2.6f) - r);
+                l += drive_ * (soft_clip(l * 2.6f) - l);
+                r += drive_ * (soft_clip(r * 2.6f) - r);
             }
             l = filt_l_.low(l);
             r = filt_r_.low(r);

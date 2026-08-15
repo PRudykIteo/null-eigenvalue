@@ -1,8 +1,8 @@
 /* nulleig.h - the whole engine, as flat C so Dart's FFI can call it.
  *
  * There is one object, `ne_engine`, and it owns everything: the synthesis, the
- * effects and (on a phone) the audio device. Dart never sees a sample. It sets
- * a handful of scalars and reads back a small block of numbers to draw with.
+ * effects and the audio device. Dart never sees a sample. It sets a handful of
+ * scalars and reads back a small block of numbers to draw with.
  *
  * Threading contract, which is the only subtle thing here:
  *   - ne_create / ne_destroy / ne_start / ne_stop are called from one thread
@@ -25,11 +25,10 @@
 extern "C" {
 #endif
 
-// `used` as well as `visible`: on iOS these sources are linked statically into
-// the app, and Dart resolves them at run time out of the process image. To the
-// linker that looks like a symbol nobody calls, and -dead_strip would throw
-// the entire engine away - a build that succeeds and then cannot find
-// ne_create on the device.
+// `used` as well as `visible`. Dart resolves these at run time rather than by
+// linking against them, so to the linker they look like symbols nobody calls -
+// and a dead-strip would throw the entire engine away, producing a build that
+// succeeds and then cannot find ne_create.
 #if defined(_WIN32)
 #define NE_API __declspec(dllexport)
 #else
@@ -97,8 +96,8 @@ NE_API void ne_set_field(ne_engine* e, float x, float y);
 NE_API void ne_set_touch(ne_engine* e, int active, float speed);
 
 /* Master fade. Anything non-zero fades up over ~1.2 s, zero fades down and
- * then idles the synthesis. The device keeps running either way so that the
- * OS does not reclaim the audio session mid-pause. */
+ * then idles the synthesis. The device keeps running either way - reopening it
+ * on every pause is how you collect glitches on the way back in. */
 NE_API void ne_set_playing(ne_engine* e, int playing);
 NE_API int  ne_playing(const ne_engine* e);
 
@@ -117,19 +116,40 @@ NE_API void ne_set_sleep(ne_engine* e, double seconds);
 /* Seconds until the armed sleep fires; negative when disarmed. */
 NE_API double ne_sleep_remaining(const ne_engine* e);
 
-/* Re-seeds every random stream. Same seed + same parameters = same piece,
- * which is what makes the thing testable at all. */
+/* Re-seeds every random stream and restarts the piece from silence: the
+ * voices, the harmony, the bells, the reverb tail and every smoothed parameter
+ * go back to a known state, so the same seed really does give the same music
+ * rather than merely the same notes over whatever was already ringing.
+ *
+ * Note that the seed alone does not describe a piece. The mood decides the
+ * scale, the register and half the effects; the field decides brightness and
+ * density, and through them the filter, the timbre, how many voices are
+ * sounding and how often bells arrive. Use ne_set_piece to set all four - this
+ * one leaves the other three wherever they were. */
 NE_API void ne_set_seed(ne_engine* e, uint32_t seed);
+
+/* The seed currently in force. */
+NE_API uint32_t ne_seed(const ne_engine* e);
+
+/* Everything that decides what a piece is, applied as one thing.
+ *
+ * This exists because the parts cannot be set separately and mean the same
+ * thing. The audio thread acts on a reseed at its next control block, and the
+ * reseed draws the opening chord out of whatever mood is current at that
+ * moment - so ne_set_mood followed by ne_set_seed pitches every voice from the
+ * mood being left behind. `x` and `y` are the field, both 0..1, as
+ * ne_set_field. */
+NE_API void ne_set_piece(ne_engine* e, uint32_t seed, int mood, float x, float y);
 
 /* ------------------------------------------------------------- diagnostics */
 
-/* Why there is no sound.
+/* Why there is no sound, and what it costs to make it.
  *
  * Silence has several very different causes that all look identical from the
- * outside - a device that never opened, a callback that is never called, a
- * synthesizer producing zeroes, or an audio session that is routing us
- * nowhere - and on a sideloaded build there is no console to tell them apart.
- * So the engine reports enough to distinguish them, and the app shows it.
+ * outside - a device that never opened, a callback that is never called, or a
+ * synthesizer producing zeroes - and a downloaded build has no console to tell
+ * them apart. So the engine reports enough to distinguish them, and the app
+ * shows it.
  *
  * Read it like this: `callbacks` still 0 means the OS is not asking us for
  * audio, so the problem is the device or the session. `callbacks` rising with
@@ -144,24 +164,15 @@ typedef struct ne_status {
     int sample_rate;        /* what the device actually runs at           */
     unsigned int callbacks; /* audio callbacks served since ne_start      */
     double elapsed;         /* seconds of audio rendered                  */
+    /* Share of each buffer's own duration that render() spends producing it,
+     * smoothed over about a second. 0.02 means the synthesis is using 2% of
+     * one core; 1.0 means it is exactly keeping up and about to stop doing
+     * so. Zero when built without a device - the offline harness has no real
+     * time to be a fraction of. */
+    float load;
 } ne_status;
 
 NE_API void ne_get_status(ne_engine* e, ne_status* out);
-
-/* The audio session's side of the story, as one short line.
- *
- * ne_status can prove the synthesizer is producing samples and the OS is
- * collecting them, and still not explain silence - because after the callback
- * the audio belongs to the session, and the session has opinions ne_status
- * cannot see: what category actually stuck, which physical output the route
- * points at (a Bluetooth speaker in a drawer looks exactly like a broken
- * app), what the *media* volume is (the ringer volume is a different slider),
- * and whether another app is playing over us.
- *
- * On iOS, writes something like "playback Speaker vol1.00" into `out`;
- * appends " other" when another app's audio is active. On every other
- * platform writes an empty string. Always NUL-terminates when cap > 0. */
-NE_API void ne_session_info(char* out, int cap);
 
 /* ------------------------------------------------------------- introspection */
 

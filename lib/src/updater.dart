@@ -112,11 +112,9 @@ class Updater extends ChangeNotifier {
   bool get busy => _busy;
 
   /// Whether the app should show anything at all about updates. A dev build
-  /// has no version to compare, and a phone gets its updates from AltStore or
-  /// from the .apk it was installed with.
-  bool get enabled =>
-      current.isNotEmpty &&
-      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+  /// has no version to compare against, and claiming to be up to date on no
+  /// evidence is worse than saying nothing.
+  bool get enabled => current.isNotEmpty;
 
   /// Reads the one preference this object owns.
   ///

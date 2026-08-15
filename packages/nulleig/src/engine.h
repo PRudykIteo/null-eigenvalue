@@ -135,6 +135,22 @@ class Engine {
         p_seed_.store(s, std::memory_order_relaxed);
         p_reseed_.fetch_add(1, std::memory_order_relaxed);
     }
+    uint32_t seed() const { return p_seed_.load(std::memory_order_relaxed); }
+
+    // Everything that decides what a piece is, applied together.
+    //
+    // Setting the mood and then the seed through the two separate setters does
+    // not work and cannot be made to: the audio thread picks up the reseed on
+    // the next control block, and reseed() draws the opening chord out of
+    // whatever mood is current at that moment. The ticket is bumped last here,
+    // so the block that acts on it already has all four values.
+    void set_piece(uint32_t s, int m, float x, float y) {
+        p_mood_.store(m, std::memory_order_relaxed);
+        p_x_.store(clampf(x, 0.0f, 1.0f), std::memory_order_relaxed);
+        p_y_.store(clampf(y, 0.0f, 1.0f), std::memory_order_relaxed);
+        p_seed_.store(s, std::memory_order_relaxed);
+        p_reseed_.fetch_add(1, std::memory_order_relaxed);
+    }
 
     void get_vis(ne_vis* out) const;
     int sample_rate() const { return sr_i_; }
@@ -145,6 +161,19 @@ class Engine {
  private:
     void control_block();
     void reseed(uint32_t seed);
+    // One control block's worth of smoothing - or none at all, on the block a
+    // piece starts. Every smoothed parameter is placed directly on its target
+    // there rather than allowed to glide in from wherever the previous piece
+    // left it: otherwise the same token opens differently depending on what
+    // happened to be playing before it, which is the one thing a token exists
+    // to rule out.
+    inline float smooth(OnePole& p, float target) {
+        if (prime_) {
+            p.z = target;
+            return target;
+        }
+        return p.process(target);
+    }
     void repitch(int vi);
     void apply_mood(const Mood& m);
     void start_phrase();
@@ -201,6 +230,9 @@ class Engine {
     OnePole s_cutoff_, s_res_, s_morph_, s_bright_, s_dense_, s_air_,
         s_rev_mix_, s_dly_mix_, s_drive_, s_chorus_, s_tilt_, s_gain_,
         s_bell_rate_, s_shimmer_, s_tone_;
+    // Set by reseed(), cleared at the end of the control block that follows
+    // it. See smooth().
+    bool prime_ = false;
     float exc_ = 0.0f;      // touch excitation, decays
     float gate_ = 0.0f;     // master fade
     float motion_ = 0.0f;   // how much harmony moved recently, for the visuals

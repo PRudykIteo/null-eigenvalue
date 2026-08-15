@@ -1,5 +1,6 @@
 ﻿import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:nulleig/nulleig.dart';
@@ -87,6 +88,10 @@ class NebulaState extends ChangeNotifier {
   /// without putting a permanent button on the screen.
   double idleHint = 1;
 
+  /// The fraction of the window's real pixels the field is rasterised at, then
+  /// scaled back up. 1 draws at full resolution; see [NebulaPainter.paint].
+  double renderScale = 1;
+
   void advance(double dt, DroneVis v) {
     t += dt;
     vis = v;
@@ -167,14 +172,41 @@ class NebulaPainter extends CustomPainter {
 
   static final Float64List _identity = Matrix4.identity().storage;
 
+  /// The bounds every blob is trimmed against, set once per [paint].
+  Rect _bounds = Rect.zero;
+
   void _blob(Canvas c, Offset p, double radius, Color color) {
     if (radius <= 0.2 || color.a <= 0.002) return;
-    final src = Rect.fromLTWH(
+
+    final dst = Rect.fromCircle(center: p, radius: radius);
+
+    // Trim the quad to what is actually on screen, and take the matching
+    // corner out of the source rectangle so the picture is unchanged.
+    //
+    // The blobs are deliberately far larger than the window: the pool of light
+    // under the field has a radius of 1.15 times the geometric mean of the two
+    // sides, which on a large window is a quad several times the area of the
+    // screen it is being drawn on. The backend does clip it, but not before
+    // the whole thing has been through the blend, and there are fifteen of
+    // them a frame.
+    final vis = dst.intersect(_bounds);
+    if (vis.isEmpty) return;
+
+    final tex = Rect.fromLTWH(
         0, 0, textures.blob.width.toDouble(), textures.blob.height.toDouble());
+    final src = vis == dst
+        ? tex
+        : Rect.fromLTRB(
+            tex.left + (vis.left - dst.left) / dst.width * tex.width,
+            tex.top + (vis.top - dst.top) / dst.height * tex.height,
+            tex.left + (vis.right - dst.left) / dst.width * tex.width,
+            tex.top + (vis.bottom - dst.top) / dst.height * tex.height,
+          );
+
     c.drawImageRect(
       textures.blob,
       src,
-      Rect.fromCircle(center: p, radius: radius),
+      vis,
       Paint()
         ..blendMode = BlendMode.plus
         ..filterQuality = FilterQuality.low
@@ -184,7 +216,63 @@ class NebulaPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final scale = state.renderScale;
+    final w = (size.width * scale).round();
+    final h = (size.height * scale).round();
+
+    if (scale >= 0.999 || w < 16 || h < 16) {
+      _paintField(canvas, size);
+      _paintGrain(canvas, size);
+      return;
+    }
+
+    // Draw the field into a smaller image and stretch it back over the window.
+    //
+    // The whole composition is soft blobs with no edge anywhere in it, so
+    // there is no detail to lose - and the cost of this picture is almost
+    // entirely blended pixels, which this scales by the square. The grain goes
+    // on afterwards at full resolution: it is the one thing here that is
+    // supposed to be per-pixel, and it doubles as dither for the upscale.
+    final recorder = ui.PictureRecorder();
+    final small = Canvas(recorder);
+    small.scale(w / size.width, h / size.height);
+    _paintField(small, size);
+    final picture = recorder.endRecording();
+
+    // Synchronous, so the field never lags a frame behind the grain over it.
+    final image = picture.toImageSync(w, h);
+    picture.dispose();
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(0, 0, w.toDouble(), h.toDouble()),
+      Offset.zero & size,
+      Paint()..filterQuality = FilterQuality.low,
+    );
+    // The draw above holds its own reference until the frame is rasterised.
+    image.dispose();
+
+    _paintGrain(canvas, size);
+  }
+
+  /// The grain, over everything: it is dither for the wide dark gradients
+  /// underneath, and it only works if it is applied to the finished frame.
+  void _paintGrain(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..blendMode = BlendMode.plus
+        ..shader = ImageShader(
+          textures.grain,
+          TileMode.repeated,
+          TileMode.repeated,
+          _identity,
+        ),
+    );
+  }
+
+  void _paintField(Canvas canvas, Size size) {
     final rect = Offset.zero & size;
+    _bounds = rect;
     // The geometric mean of the two sides, not the smaller one. On a phone the
     // short side is the width, and sizing everything by it left the whole
     // composition sitting in the middle third of the screen with black above
@@ -335,21 +423,6 @@ class NebulaPainter extends CustomPainter {
           ..color = palette.accent.withValues(alpha: idleHint * 0.55),
       );
     }
-
-    // ---- grain -------------------------------------------------------------
-    // Last, over everything: it is dither for the wide dark gradients
-    // underneath, and it only works if it is applied to the finished frame.
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..blendMode = BlendMode.overlay
-        ..shader = ImageShader(
-          textures.grain,
-          TileMode.repeated,
-          TileMode.repeated,
-          _identity,
-        ),
-    );
   }
 
   @override
