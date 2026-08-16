@@ -14,7 +14,12 @@ class MainActivity : AudioServiceActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        requestNotificationPermission()
+        // Not on a television. There the grant buys a transport in a
+        // notification shade nobody opens, and it costs a permission dialog
+        // that has to be dismissed with a remote before anything is heard.
+        if (!packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
+            requestNotificationPermission()
+        }
     }
 
     // Android 13 made notifications opt-in, and audio_service does not ask.

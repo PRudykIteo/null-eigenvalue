@@ -12,3 +12,10 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# Except this one, which is deliberately public. It signs the sideloaded TV
+# build, and a sideloaded app has no store account behind it and no upload key
+# to protect. What it buys is a signature that stays the same between builds,
+# so a new APK installs over the old app rather than being refused - which the
+# per-machine debug key cannot do. See .github/workflows/tv-keystore.yml.
+!nulleig-tv.jks

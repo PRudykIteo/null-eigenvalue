@@ -32,13 +32,35 @@ android {
         versionName = flutter.versionName
     }
 
+    // Not a secret, and deliberately in the repository. The app is sideloaded
+    // rather than sold through a store, so there is no upload key to protect;
+    // what this buys is a signature that stays the same from build to build.
+    // The debug key below does not: Gradle generates one per machine, so every
+    // CI runner signs with a different key and a new release then refuses to
+    // install over the old one - "App not installed", and the only way through
+    // it is uninstalling first, which throws away the saved piece.
+    //
+    // Absent until the keystore workflow has been run once, hence the fallback.
+    val sideloadStore = rootProject.file("nulleig-tv.jks")
+
+    signingConfigs {
+        if (sideloadStore.exists()) {
+            create("sideload") {
+                storeFile = sideloadStore
+                storePassword = "nulleigenvalue"
+                keyAlias = "nulleig"
+                keyPassword = "nulleigenvalue"
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Signed with the debug key on purpose. This app is distributed by
-            // sideload, not through Play, so there is no upload key to protect
-            // and CI has no secret to leak. Anyone who wants a differently
-            // signed build can re-sign the APK.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (sideloadStore.exists()) {
+                signingConfigs.getByName("sideload")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = false
             isShrinkResources = false
         }

@@ -1,0 +1,142 @@
+# Builds the television APK and publishes it at a URL that does not move.
+#
+# Separate from build.yml on purpose. That workflow cuts releases only from
+# main, and this is a branch that is not going there - but a television needs
+# somewhere to fetch from: the Downloader app on a TV takes a URL and nothing
+# else, and an Actions artifact is behind a login. So this keeps one release,
+# tagged `tv-latest`, replaced on every run, which makes
+#
+#   https://github.com/doctorspider42/null-eigenvalue/releases/download/tv-latest/NullEigenvalue-TV.apk
+#
+# a permanent address for whatever the newest build is.
+name: TV release
+
+on:
+  push:
+    branches: ['claude/android-tv-app-**']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tv-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.47.0
+  NDK_VERSION: 27.0.12077973
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install the NDK
+        run: |
+          set -euo pipefail
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" "cmake;3.22.1"
+
+      # major.minor from the pubspec, then the run number - the same scheme
+      # build.yml uses, so a TV build is always strictly newer than the last.
+      - name: Work out the version
+        id: v
+        run: |
+          set -euo pipefail
+          BASE=$(grep '^version:' pubspec.yaml | sed 's/version: *//; s/+.*//' | cut -d. -f1,2)
+          echo "version=${BASE}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+      - name: Build the APK
+        run: |
+          flutter build apk --release \
+            --build-name=${{ steps.v.outputs.version }} \
+            --build-number=${{ steps.v.outputs.build }}
+
+      # Three things that each break silently: an APK with no engine installs
+      # and then says the synthesis engine did not load; one with no leanback
+      # category installs and then cannot be started from the TV at all; one
+      # signed with a per-runner debug key installs once and then refuses every
+      # update after it.
+      - name: Confirm it is really a television build
+        run: |
+          set -euo pipefail
+          APK=build/app/outputs/flutter-apk/app-release.apk
+
+          if ! unzip -l "$APK" | grep -q 'lib/arm64-v8a/libnulleig.so'; then
+            echo "::error::libnulleig.so is not in the APK"
+            unzip -l "$APK" | grep 'lib/' || true
+            exit 1
+          fi
+
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
+          "$AAPT" dump badging "$APK" > badging.txt
+          if ! grep -q 'leanback-launchable-activity' badging.txt; then
+            echo "::error::no LEANBACK_LAUNCHER - a TV would install this and \
+          then have no way to start it"
+            grep -i 'launchable\|uses-feature' badging.txt || true
+            exit 1
+          fi
+          grep -i 'launchable\|banner\|uses-feature' badging.txt || true
+
+          if [ -f android/nulleig-tv.jks ]; then
+            echo "Signed with the committed keystore; updates will install over."
+          else
+            echo "::warning::android/nulleig-tv.jks is missing, so this is \
+          signed with a per-runner debug key. Updates will NOT install over an \
+          older build - run the 'TV keystore' workflow once to fix that."
+          fi
+
+          cp "$APK" NullEigenvalue-TV.apk
+          ls -lh NullEigenvalue-TV.apk
+
+      - name: Publish it at the address that does not move
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.v.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Replaced rather than added to: the point of the tag is that it
+          # always means "newest", so the old asset must not survive under it.
+          gh release delete tv-latest --yes --cleanup-tag || true
+          cat > notes.md <<EOF
+          Android TV build from \`${GITHUB_SHA:0:7}\`, branch \`${GITHUB_REF_NAME}\`.
+
+          Install it on the set with the **Downloader** app (AFTVnews, code troypoint
+          not required - just paste the URL):
+
+          \`https://github.com/${GITHUB_REPOSITORY}/releases/download/tv-latest/NullEigenvalue-TV.apk\`
+
+          or over the network from a computer:
+
+          \`\`\`
+          adb connect <the TV's address>:5555
+          adb install -r NullEigenvalue-TV.apk
+          \`\`\`
+
+          The set will ask to allow installs from unknown sources the first time.
+
+          **Remote** — D-pad moves the field, OK raises the HUD, then D-pad chooses and
+          OK uses. Back closes what is open, and closes the app from the bare picture.
+          EOF
+          gh release create tv-latest \
+            NullEigenvalue-TV.apk \
+            --target "$GITHUB_SHA" \
+            --title "Null Eigenvalue TV ${V}" \
+            --notes-file notes.md \
+            --prerelease

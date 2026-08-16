@@ -12,6 +12,19 @@ bool get isDesktop => Platform.isWindows || Platform.isMacOS || Platform.isLinux
 
 bool get isMobile => Platform.isAndroid || Platform.isIOS;
 
+/// Whether the instrument is running on a television.
+///
+/// This branch exists only to put it on one, so here Android *is* the TV:
+/// there is no phone build on this tree to tell it apart from. A source that
+/// shipped both would have to ask `UiModeManager` across a channel and wait for
+/// the answer before the first frame, which is a startup cost paid to learn
+/// something this tree knows at compile time.
+///
+/// What actually differs is the whole input story - no pointer, no keyboard, a
+/// D-pad four inches from someone's hand and three metres from the screen - so
+/// this flag is read rather more than the other two.
+bool get isTv => Platform.isAndroid;
+
 /// Whether `audio_service` has an implementation here.
 ///
 /// It ships Android, iOS and macOS. On the Mac that is worth having: it puts

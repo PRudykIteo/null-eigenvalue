@@ -11,7 +11,9 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:null_eigenvalue/src/hud.dart';
 import 'package:null_eigenvalue/src/palette.dart';
+import 'package:null_eigenvalue/src/tv_focus.dart';
 import 'package:null_eigenvalue/src/updater.dart';
 import 'package:nulleig/nulleig.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -23,6 +25,37 @@ void main() {
     // If these ever disagree, the app indexes past the end of the palette list
     // the first time someone taps the last mood.
     expect(MoodPalette.all.length, neMoodCount);
+  });
+
+  group('the remote', () {
+    test('the ring and the playing mood are different things', () {
+      // Walking the row must not change the mood - six presses to reach the
+      // last one would otherwise cost six crossfades.
+      const focus = TvFocus(control: TvControl.mood, mood: 3);
+      expect(focus.ringsMood(3), isTrue);
+      expect(focus.ringsMood(0), isFalse);
+      // And the cursor keeps its dot while it is somewhere else entirely, so
+      // coming back to the row lands where it left.
+      final gear = focus.withControl(TvControl.gear);
+      expect(gear.mood, 3);
+      expect(gear.ringsMood(3), isFalse);
+    });
+
+    test('the D-pad can reach every dot', () {
+      // The chrome handler clamps the cursor to this, so a mood the engine
+      // grew without a dot to match would be unreachable from a remote.
+      expect(MoodPalette.all.length, neMoodCount);
+    });
+
+    test('every panel row a remote can reach has something on it', () {
+      // OFF, one row per duration, then the level and the diagnostics switch.
+      // Adding a duration without extending the count leaves the last one
+      // unreachable, and the handler turns row n into minutes[n - 1], so the
+      // off-by-one picks the wrong duration rather than failing outright.
+      expect(SettingsPanel.tvRowCount, SettingsPanel.minutes.length + 3);
+      expect(SettingsPanel.tvVolumeRow, SettingsPanel.minutes.length + 1);
+      expect(SettingsPanel.tvDiagnosticsRow, SettingsPanel.tvVolumeRow + 1);
+    });
   });
 
   test('palette names match the engine order', () {

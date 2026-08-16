@@ -59,6 +59,38 @@ that also hides its shortcuts is just a locked door. On a Mac the media keys
 and Now Playing work exactly as the lock screen does on a phone; Windows and
 Linux have no equivalent to talk to.
 
+### On a television
+
+The set is the third shape of the same screen, and the remote is the interesting
+part: it has four directions and a button, and the four directions have to mean
+two different things.
+
+| | |
+|---|---|
+| D-pad, picture bare | the field |
+| **OK**, picture bare | raise the HUD, or start it while silent |
+| D-pad, HUD up | walk the gear, the transport and the moods |
+| **OK**, HUD up | use whatever has the ring round it |
+| ← →, on the transport | volume |
+| **Back** | close the panel, then the HUD, then the app |
+
+So the instrument is under the D-pad whenever nothing is in the way — which is
+the reason it is worth putting on a television at all — and the same four keys
+become a cursor the moment there is something to point at. A ring in the accent
+colour says which control the button would use; the filled dot still says which
+mood is playing, and they are deliberately not the same thing, so walking across
+the row costs nothing until OK is pressed.
+
+The HUD waits eight seconds before hiding rather than four: that timeout is fair
+for something you stopped pointing at and mean for something you are still
+walking a D-pad across. Behind the gear the panel lays out in two columns, with
+the sleep durations on the left and the level, a **diagnostics** switch and the
+button legend on the right — a television has no console and no long-press, so
+that switch is the only way to ask this build why it is quiet.
+
+Remotes with a play/pause key work too; that one arrives through the media
+session rather than as a key, the same way a lock screen's does.
+
 The gear is where everything the app can be told to do now lives: sleep, level,
 updates and the keys, in two columns on a window wide enough for them. The
 running version sits after the wordmark at the top, at half its weight — an app
@@ -101,6 +133,40 @@ same network as its desktop half.
 
 **Android.** The `.apk` installs directly. It is signed with a debug key, so
 the phone will ask you to allow installs from wherever you downloaded it.
+
+**Android TV.** This branch builds its own APK and keeps it at one address that
+does not move, because a television has no browser worth using and the Downloader
+app takes a URL and nothing else:
+
+```
+https://github.com/doctorspider42/null-eigenvalue/releases/download/tv-latest/NullEigenvalue-TV.apk
+```
+
+Paste that into [Downloader](https://www.aftvnews.com/downloader/) on the set,
+or push it from a computer on the same network:
+
+```bash
+adb connect <the TV's address>:5555
+```
+
+The address is in the set's network settings, and ADB debugging has to be turned
+on first — on most Android TV and Google TV boxes that is Settings → System →
+About, then clicking Build seven times, then Developer options → USB debugging.
+A dialog appears on the television the first time asking whether to trust the
+computer. Then:
+
+```bash
+adb install -r NullEigenvalue-TV.apk
+```
+
+The `-r` replaces an installed copy in place, which works only while the
+signature stays the same. It does not by default: Gradle's debug key is
+generated per machine, so every CI runner would sign with a different one and
+Android would refuse the update. Running the **TV keystore** workflow once makes
+a fixed key, commits it, and every build after that installs over the last. It
+is deliberately not a secret — a sideloaded app has no store account behind it
+and nothing to protect — and it must not be regenerated afterwards, since a new
+key means the next build cannot install over this one either.
 
 **Windows.** `NullEigenvalue-Setup.exe` installs into your own profile and
 needs no administrator. It is not signed, so SmartScreen will say it does not
