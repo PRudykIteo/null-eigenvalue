@@ -25,7 +25,7 @@ concurrency:
 
 env:
   FLUTTER_VERSION: 3.47.0
-  NDK_VERSION: 27.0.12077973
+  NDK_VERSION: 28.2.13676358
 
 jobs:
   apk:

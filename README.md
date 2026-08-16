@@ -139,8 +139,11 @@ does not move, because a television has no browser worth using and the Downloade
 app takes a URL and nothing else:
 
 ```
-https://github.com/doctorspider42/null-eigenvalue/releases/download/tv-latest/NullEigenvalue-TV.apk
+https://github.com/PRudykIteo/null-eigenvalue/releases/download/tv-latest/NullEigenvalue-TV.apk
 ```
+
+That is this fork, not the upstream repository — the TV release is built and published
+here, and nowhere else.
 
 Paste that into [Downloader](https://www.aftvnews.com/downloader/) on the set,
 or push it from a computer on the same network:
@@ -344,6 +347,41 @@ privileged operation otherwise:
 ```bash
 start ms-settings:developers
 ```
+
+### Building the TV APK without installing anything
+
+The Android half of that toolchain — Flutter, the SDK, the NDK, a JDK — is
+about ten gigabytes, and there is no reason for it to live on a machine that
+otherwise only writes Dart. `tools/docker/Dockerfile` puts the whole thing in a
+container, pinned to the same versions as the workflow, so that the build you
+run locally and the build CI runs are the same build rather than two builds
+that agree most of the time.
+
+```bash
+docker build -t nulleig-tv tools/docker
+```
+
+Then, from the repository root:
+
+```bash
+docker run --rm -v "${PWD}:/app" -w /app nulleig-tv flutter analyze
+```
+
+```bash
+docker run --rm -v "${PWD}:/app" -w /app nulleig-tv flutter test
+```
+
+```bash
+docker run --rm -v "${PWD}:/app" -v nulleig-gradle:/opt/gradle-cache -w /app nulleig-tv flutter build apk --release
+```
+
+The named volume is what makes the second build worth waiting for: `--rm` throws
+the container's own filesystem away, Gradle's cache with it, and a cold cache is
+the difference between about nine minutes and about five.
+
+The APK lands in `build/app/outputs/flutter-apk/` on the host, because the
+working directory is a mount rather than a copy — so it can go straight to a
+television by any of the routes above without waiting for a release to be cut.
 
 ## Licence
 

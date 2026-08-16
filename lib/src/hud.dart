@@ -559,18 +559,22 @@ class SettingsPanel extends StatelessWidget {
 
   /// The level's row, which is also the count of sleep rows above it: OFF and
   /// one per duration.
-  static const int tvVolumeRow = 1 + minutes.length;
+  ///
+  /// `final` rather than `const`: a list's length is not a constant expression
+  /// in Dart, and deriving these three from [minutes] is worth more than being
+  /// able to write them in a const context, which nothing does.
+  static final int tvVolumeRow = 1 + minutes.length;
 
   /// The diagnostics switch. It is only a row on a television: everywhere else
   /// the reading is summoned by long-pressing the frequency or by pressing D,
   /// and a remote can do neither. Leaving it unreachable would make the TV the
   /// one build that cannot be asked why it is silent - on the platform with the
   /// least chance of anyone having a console open.
-  static const int tvDiagnosticsRow = tvVolumeRow + 1;
+  static final int tvDiagnosticsRow = tvVolumeRow + 1;
 
   /// How many rows a remote can walk through. The legend is not among them -
   /// there is nothing there to press.
-  static const int tvRowCount = tvDiagnosticsRow + 1;
+  static final int tvRowCount = tvDiagnosticsRow + 1;
 
   /// The master level, 0..1, or null to leave the section out entirely - which
   /// is what a phone does, having a hardware volume control six inches from

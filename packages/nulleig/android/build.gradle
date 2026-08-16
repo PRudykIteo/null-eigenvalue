@@ -35,7 +35,13 @@ android {
     // `android.ndkVersion` it resolves to whatever the Android Gradle Plugin
     // defaults to, which is a different NDK from the one the app asks for -
     // and then the build needs two of them installed.
-    ndkVersion = "27.0.12077973"
+    //
+    // 28 rather than 27 because six of the plugins in this app - audio_service,
+    // audio_session, jni, jni_flutter, shared_preferences_android and
+    // sqflite_android - ask for 28.2.13676358, and the highest wins. Pinned to
+    // 27 the build still succeeded, quietly downloading 28 mid-run and using it
+    // anyway, so the pin was documenting a version nothing was built with.
+    ndkVersion = "28.2.13676358"
 
     // Invoke the shared CMake build with the Android Gradle Plugin.
     externalNativeBuild {
