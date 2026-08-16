@@ -520,6 +520,7 @@ class SettingsPanel extends StatelessWidget {
     this.scale = 1,
     this.showKeys = false,
     this.tv = false,
+    this.focusColumn = tvSleepColumn,
     this.focusRow = 0,
     this.volume,
     this.onVolume,
@@ -541,15 +542,16 @@ class SettingsPanel extends StatelessWidget {
 
   /// Whether to lay this out for a remote rather than for a pointer.
   ///
-  /// Not merely a legend swap. At the size a television needs the single
-  /// column runs off the bottom of a 540-pixel-tall logical screen, so the
-  /// sleep durations take the left half and the level and the legend the right,
-  /// and nothing has to scroll - which matters more here than anywhere else,
-  /// because a D-pad cannot scroll a list it cannot see the end of.
+  /// Not merely a legend swap. At the size a television needs, the single
+  /// column runs off the bottom of a 540-pixel-tall logical screen, so this
+  /// becomes three: the sleep durations, then the settings beside them, then
+  /// the legend. Nothing scrolls, which matters more here than anywhere else -
+  /// a D-pad cannot scroll towards a row it cannot see.
   final bool tv;
 
-  /// Which row the remote is sitting on. Rows are counted the way
-  /// [tvRowCount] describes; ignored entirely unless [tv].
+  /// Where the remote is sitting: which column, and which row inside it. Both
+  /// are ignored entirely unless [tv]. See [tvRowsIn].
+  final int focusColumn;
   final int focusRow;
 
   /// The durations, in the order they are drawn. Public because the remote's
@@ -557,37 +559,46 @@ class SettingsPanel extends StatelessWidget {
   /// copy of the list somewhere else is a second copy to forget to update.
   static const List<int> minutes = <int>[15, 30, 45, 60, 90];
 
-  /// The level's row, which is also the count of sleep rows above it: OFF and
-  /// one per duration.
+  /// The two columns a remote can walk, in the order they are drawn.
   ///
-  /// `final` rather than `const`: a list's length is not a constant expression
-  /// in Dart, and deriving these three from [minutes] is worth more than being
-  /// able to write them in a const context, which nothing does.
-  static final int tvVolumeRow = 1 + minutes.length;
+  /// The cursor is a column and a row rather than one running number. It was
+  /// one number to begin with, which meant walking all six sleep durations to
+  /// reach the level sitting beside them - the eye saw two columns and the
+  /// D-pad treated them as one list. The legend is a third column and is not
+  /// here: there is nothing in it to press.
+  static const int tvSleepColumn = 0;
+  static const int tvSettingsColumn = 1;
+
+  /// Rows within [tvSettingsColumn]. The level first, because it is the one
+  /// most likely to be wanted twice in an evening.
+  static const int tvVolumeRow = 0;
 
   /// The diagnostics switch. It is only a row on a television: everywhere else
   /// the reading is summoned by long-pressing the frequency or by pressing D,
   /// and a remote can do neither. Leaving it unreachable would make the TV the
   /// one build that cannot be asked why it is silent - on the platform with the
   /// least chance of anyone having a console open.
-  static final int tvDiagnosticsRow = tvVolumeRow + 1;
+  static const int tvDiagnosticsRow = 1;
 
   /// The one row that both checks for a new version and installs it. Two verbs
   /// on one row because which of them is meant is never ambiguous - there is
   /// either something to install or there is not - and a remote should walk
   /// past as few rows as the app can manage.
-  static final int tvUpdateRow = tvDiagnosticsRow + 1;
+  static const int tvUpdateRow = 2;
 
   /// Whether to go looking by itself. Worth a row of its own even on a
   /// television: "do not use my network unasked" is a different wish from
   /// "never offer me a new version", and only the first one is common.
-  static final int tvAutoRow = tvUpdateRow + 1;
+  static const int tvAutoRow = 3;
 
-  /// How many rows a remote can walk through. The legend is not among them -
-  /// there is nothing there to press - and the last two exist only where there
-  /// is an updater to talk to, which a build CI did not cut does not have.
-  static int tvRows({required bool withUpdates}) =>
-      withUpdates ? tvAutoRow + 1 : tvDiagnosticsRow + 1;
+  /// How many rows [column] has. The last two of the settings column exist only
+  /// where there is an updater to talk to, which a build CI did not cut has
+  /// not; drawing and counting them are behind the same condition, and a test
+  /// holds them to it.
+  static int tvRowsIn(int column, {required bool withUpdates}) =>
+      column == tvSleepColumn
+          ? 1 + minutes.length
+          : (withUpdates ? tvAutoRow + 1 : tvUpdateRow);
 
   /// The master level, 0..1, or null to leave the section out entirely - which
   /// is what a phone does, having a hardware volume control six inches from
@@ -635,9 +646,10 @@ class SettingsPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     // A television is the one place the single column does not fit: at the size
     // three metres needs, the durations alone are most of the screen's height.
-    // So the sleep rows take the left and everything else the right, and the
-    // panel never has to scroll - which matters here more than anywhere,
-    // because a D-pad cannot scroll towards a row it cannot see.
+    // Three columns rather than two, because with the settings and both halves
+    // of the legend stacked together the right-hand one ran to the bottom edge
+    // of the screen - and it is the column the eye reads last, so it was the
+    // one that could least afford to.
     if (tv) {
       // Scaled down rather than scrolled if it somehow still does not fit. The
       // set of televisions is wider than the two shapes this was measured
@@ -645,10 +657,9 @@ class SettingsPanel extends StatelessWidget {
       // with an overflow stripe across it that a D-pad cannot scroll away.
       return FittedBox(
         fit: BoxFit.scaleDown,
-        child: _columns(
-          left:
-              Column(mainAxisSize: MainAxisSize.min, children: _sleepSection()),
-          right: Column(
+        child: _columns(<Widget>[
+          Column(mainAxisSize: MainAxisSize.min, children: _sleepSection()),
+          Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -657,6 +668,7 @@ class SettingsPanel extends StatelessWidget {
               _row(
                 'DIAGNOSTICS',
                 selected: diagnosticsOn,
+                col: tvSettingsColumn,
                 row: tvDiagnosticsRow,
                 onTap: onDiagnostics ?? () {},
               ),
@@ -667,24 +679,31 @@ class SettingsPanel extends StatelessWidget {
                   // Never the accent. It is a verb, and colouring it like an
                   // armed sleep duration would read as a state.
                   selected: false,
+                  col: tvSettingsColumn,
                   row: tvUpdateRow,
                   onTap: updates!.busy ? () {} : updates!.primaryAction,
                 ),
                 _row(
                   'AUTOMATIC',
                   selected: updates!.auto,
+                  col: tvSettingsColumn,
                   row: tvAutoRow,
                   onTap: () => updates!.onAuto(!updates!.auto),
                 ),
                 _note(updates!.status),
               ],
-              SizedBox(height: 26 * scale),
+            ],
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
               ..._legendSection('PICTURE', _remotePicture),
               SizedBox(height: 26 * scale),
               ..._legendSection('CHROME', _remoteChrome),
             ],
           ),
-        ),
+        ]),
       );
     }
 
@@ -704,24 +723,25 @@ class SettingsPanel extends StatelessWidget {
     // be.
     return SingleChildScrollView(
       child: showKeys
-          ? _columns(
-              left: settings,
-              right: Column(
+          ? _columns(<Widget>[
+              settings,
+              Column(
                 mainAxisSize: MainAxisSize.min,
                 children: _legendSection('KEYS', _keys),
               ),
-            )
+            ])
           : settings,
     );
   }
 
-  Widget _columns({required Widget left, required Widget right}) => Row(
+  Widget _columns(List<Widget> columns) => Row(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          left,
-          SizedBox(width: 56 * scale),
-          right,
+          for (var i = 0; i < columns.length; i++) ...<Widget>[
+            if (i > 0) SizedBox(width: 56 * scale),
+            columns[i],
+          ],
         ],
       );
 
@@ -776,11 +796,16 @@ class SettingsPanel extends StatelessWidget {
         ),
       ),
       SizedBox(height: 26 * scale),
-      _row('OFF', selected: !armed, row: 0, onTap: () => onPick(null)),
+      _row('OFF',
+          selected: !armed,
+          col: tvSleepColumn,
+          row: 0,
+          onTap: () => onPick(null)),
       for (var i = 0; i < minutes.length; i++)
         _row(
           '${minutes[i]} MIN',
           selected: armed && choice?.inMinutes == minutes[i],
+          col: tvSleepColumn,
           row: i + 1,
           onTap: () => onPick(Duration(minutes: minutes[i])),
         ),
@@ -791,7 +816,9 @@ class SettingsPanel extends StatelessWidget {
         _heading('VOLUME ${(volume! * 100).round()}%'),
         SizedBox(height: 16 * scale),
         FocusRing(
-          on: tv && focusRow == tvVolumeRow,
+          on: tv &&
+              focusColumn == tvSettingsColumn &&
+              focusRow == tvVolumeRow,
           colour: accent,
           child: _VolumeBar(
             value: volume!,
@@ -872,12 +899,13 @@ class SettingsPanel extends StatelessWidget {
     required bool selected,
     required VoidCallback onTap,
     int row = -1,
+    int col = -1,
   }) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: FocusRing(
-        on: tv && row == focusRow,
+        on: tv && row == focusRow && col == focusColumn,
         colour: accent,
         child: Padding(
           padding: EdgeInsets.symmetric(

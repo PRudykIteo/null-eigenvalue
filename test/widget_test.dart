@@ -49,14 +49,28 @@ void main() {
     });
 
     test('every panel row a remote can reach has something on it', () {
-      // OFF, one row per duration, then the level and the diagnostics switch.
-      // Adding a duration without extending the count leaves the last one
-      // unreachable, and the handler turns row n into minutes[n - 1], so the
-      // off-by-one picks the wrong duration rather than failing outright.
-      expect(SettingsPanel.tvVolumeRow, SettingsPanel.minutes.length + 1);
-      expect(SettingsPanel.tvDiagnosticsRow, SettingsPanel.tvVolumeRow + 1);
+      // The sleep column is OFF plus one row per duration. Adding a duration
+      // without the count following leaves the last one unreachable, and the
+      // handler turns row n into minutes[n - 1], so an off-by-one picks the
+      // wrong duration rather than failing outright.
       expect(
-          SettingsPanel.tvRows(withUpdates: false), SettingsPanel.minutes.length + 3);
+        SettingsPanel.tvRowsIn(SettingsPanel.tvSleepColumn, withUpdates: true),
+        SettingsPanel.minutes.length + 1,
+      );
+      // Whether there is an updater is the settings column's business.
+      expect(
+        SettingsPanel.tvRowsIn(SettingsPanel.tvSleepColumn, withUpdates: false),
+        SettingsPanel.tvRowsIn(SettingsPanel.tvSleepColumn, withUpdates: true),
+      );
+    });
+
+    test('the level is the first thing sideways of the durations', () {
+      // The point of the second column. Reaching the level used to mean walking
+      // all six durations, because the cursor was one running number over a
+      // layout the eye reads as two columns side by side.
+      expect(SettingsPanel.tvVolumeRow, 0);
+      expect(SettingsPanel.tvSettingsColumn,
+          greaterThan(SettingsPanel.tvSleepColumn));
     });
 
     test('the chrome fits the screen a television actually reports', () {
@@ -81,8 +95,13 @@ void main() {
       // and the second one is silent - the ring simply vanishes.
       expect(SettingsPanel.tvUpdateRow, SettingsPanel.tvDiagnosticsRow + 1);
       expect(SettingsPanel.tvAutoRow, SettingsPanel.tvUpdateRow + 1);
-      expect(SettingsPanel.tvRows(withUpdates: true),
-          SettingsPanel.tvRows(withUpdates: false) + 2);
+      expect(
+        SettingsPanel.tvRowsIn(SettingsPanel.tvSettingsColumn,
+            withUpdates: true),
+        SettingsPanel.tvRowsIn(SettingsPanel.tvSettingsColumn,
+                withUpdates: false) +
+            2,
+      );
     });
   });
 

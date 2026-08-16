@@ -86,6 +86,7 @@ class _FieldScreenState extends State<FieldScreen>
   /// weight everywhere else - a pointer aims at what it is over, and a keyboard
   /// has a key per control.
   TvFocus _focus = const TvFocus();
+  int _panelCol = SettingsPanel.tvSleepColumn;
   int _panelRow = 0;
 
   /// Whether the level readout is currently showing. It appears when the
@@ -450,24 +451,51 @@ class _FieldScreenState extends State<FieldScreen>
   }
 
   KeyEventResult _onPanelKey(LogicalKeyboardKey key, bool pressed) {
+    final withUpdates = widget.updater.enabled;
+
     if (key == LogicalKeyboardKey.arrowUp ||
         key == LogicalKeyboardKey.arrowDown) {
       final dir = key == LogicalKeyboardKey.arrowUp ? -1 : 1;
       final last =
-          SettingsPanel.tvRows(withUpdates: widget.updater.enabled) - 1;
+          SettingsPanel.tvRowsIn(_panelCol, withUpdates: withUpdates) - 1;
       setState(() => _panelRow = (_panelRow + dir).clamp(0, last));
       return KeyEventResult.handled;
     }
 
-    if (_panelRow == SettingsPanel.tvVolumeRow &&
-        (key == LogicalKeyboardKey.arrowLeft ||
-            key == LogicalKeyboardKey.arrowRight)) {
-      _changeVolume(key == LogicalKeyboardKey.arrowLeft ? -0.04 : 0.04);
+    if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight) {
+      final left = key == LogicalKeyboardKey.arrowLeft;
+
+      // The level is the one row that wants the sideways keys for itself. A
+      // slider that could not be moved with left and right would be the only
+      // control on the panel that does not do what it looks like it does; the
+      // way back to the durations is up or down first, which is one press and
+      // is where the eye is going anyway.
+      if (_panelCol == SettingsPanel.tvSettingsColumn &&
+          _panelRow == SettingsPanel.tvVolumeRow) {
+        _changeVolume(left ? -0.04 : 0.04);
+        return KeyEventResult.handled;
+      }
+
+      // Between the two columns. The row is carried across and clamped rather
+      // than reset, so coming back lands near where it left instead of at the
+      // top - the columns are different lengths and a reset would make the
+      // shorter one feel like it swallowed the cursor.
+      final want = left
+          ? SettingsPanel.tvSleepColumn
+          : SettingsPanel.tvSettingsColumn;
+      if (want != _panelCol) {
+        final last = SettingsPanel.tvRowsIn(want, withUpdates: withUpdates) - 1;
+        setState(() {
+          _panelCol = want;
+          _panelRow = _panelRow.clamp(0, last);
+        });
+      }
       return KeyEventResult.handled;
     }
 
     if (pressed) {
-      if (_panelRow < SettingsPanel.tvVolumeRow) {
+      if (_panelCol == SettingsPanel.tvSleepColumn) {
         _pickSleep(_panelRow == 0
             ? null
             : Duration(minutes: SettingsPanel.minutes[_panelRow - 1]));
@@ -494,6 +522,7 @@ class _FieldScreenState extends State<FieldScreen>
       case TvControl.gear:
         setState(() {
           _sleepVisible = true;
+          _panelCol = SettingsPanel.tvSleepColumn;
           _panelRow = 0;
         });
         _hudTimer?.cancel();
@@ -774,6 +803,7 @@ class _FieldScreenState extends State<FieldScreen>
                           scale: scale,
                           showKeys: isDesktop,
                           tv: isTv,
+                          focusColumn: _panelCol,
                           focusRow: _panelRow,
                           diagnosticsOn: _forceDiagnostics,
                           onDiagnostics: () => setState(
