@@ -10,6 +10,13 @@
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <!-- Android 13+ will not show the transport notification without this. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <!-- Asking GitHub whether there is a newer build. Flutter's template
+         declares this in the debug and profile manifests only - it is what the
+         tooling needs to reach the running app - so a release build has no
+         network at all unless it is said here. The failure is silent and looks
+         exactly like being offline: every request fails and the updater
+         reports that it could not reach GitHub. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <!-- The app updates itself. A television has no store to update from and no
          comfortable way to retype a download address, so it fetches the new APK
          and hands it to the system installer - which will not open for an app

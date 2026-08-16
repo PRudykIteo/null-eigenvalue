@@ -569,12 +569,7 @@ class _FieldScreenState extends State<FieldScreen>
     final double scale = isDesktop
         ? (shortest / 620).clamp(1.0, 1.5).toDouble()
         : isTv
-            // A television is a phone read from three metres away. The logical
-            // size barely moves between a 1080p set and a 4K one - the density
-            // rises with the panel, so both land near 540 - which puts this at
-            // about 1.8 on either. The clamp is for the odd box that reports
-            // something else entirely.
-            ? (shortest / 300).clamp(1.6, 2.4).toDouble()
+            ? tvChromeScale(shortest)
             : 1.0;
     _uiScale = scale;
 
@@ -703,7 +698,19 @@ class _FieldScreenState extends State<FieldScreen>
                 curve: Curves.easeOut,
                 child: IgnorePointer(
                   ignoring: !chrome,
-                  child: Hud(
+                  // The chrome is anchored to the bottom and grows upwards, so
+                  // anything that makes it taller - the diagnostics block, four
+                  // lines of it - walks it into the wordmark at the top. A
+                  // window can afford that because it has height to spare; a
+                  // television reports 540 logical pixels and does not. Bounded
+                  // to what is actually free above the bottom padding and
+                  // scaled down if it does not fit, which is the same answer
+                  // the settings panel already gives to the same question.
+                  child: _boundedForTv(
+                    context,
+                    scale: scale,
+                    overscan: overscan,
+                    child: Hud(
                     palette: palette,
                     mood: c.mood,
                     playing: c.playing,
@@ -729,6 +736,7 @@ class _FieldScreenState extends State<FieldScreen>
                       c.toggle();
                       _restartHudTimer();
                     },
+                    ),
                   ),
                 ),
               ),
@@ -851,6 +859,33 @@ class _FieldScreenState extends State<FieldScreen>
           child: screen,
         ),
       ),
+    );
+  }
+
+  /// Caps the chrome's height on a television and shrinks it rather than
+  /// letting it run off the top. A no-op everywhere else, where the window is
+  /// tall enough that the question never comes up.
+  ///
+  /// The ceiling leaves the wordmark's band alone: it is the thing the chrome
+  /// was colliding with, and a title the transport is sitting on top of reads
+  /// as a bug rather than as a dense layout.
+  Widget _boundedForTv(
+    BuildContext context, {
+    required double scale,
+    required EdgeInsets overscan,
+    required Widget child,
+  }) {
+    if (!isTv) return child;
+    final media = MediaQuery.of(context);
+    final wordmarkBand = media.padding.top + overscan.top + 46 * scale;
+    final bottomTaken =
+        media.padding.bottom + overscan.bottom + 34 * scale;
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight:
+            (media.size.height - wordmarkBand - bottomTaken).clamp(0.0, 4000.0),
+      ),
+      child: FittedBox(fit: BoxFit.scaleDown, child: child),
     );
   }
 

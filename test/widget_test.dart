@@ -13,6 +13,7 @@ import 'dart:ui';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:null_eigenvalue/src/hud.dart';
 import 'package:null_eigenvalue/src/palette.dart';
+import 'package:null_eigenvalue/src/platform.dart';
 import 'package:null_eigenvalue/src/tv_focus.dart';
 import 'package:null_eigenvalue/src/updater.dart';
 import 'package:nulleig/nulleig.dart';
@@ -56,6 +57,21 @@ void main() {
       expect(SettingsPanel.tvDiagnosticsRow, SettingsPanel.tvVolumeRow + 1);
       expect(
           SettingsPanel.tvRows(withUpdates: false), SettingsPanel.minutes.length + 3);
+    });
+
+    test('the chrome fits the screen a television actually reports', () {
+      // 960x540 at dpr 2 is what a 4K set reports; the first version of this
+      // assumed the same size but scaled it by 1.8, which stood the chrome 420
+      // pixels tall in a 540-pixel screen and pushed the transport into the
+      // wordmark once the diagnostics appeared.
+      final scale = tvChromeScale(540);
+      expect(scale, closeTo(1.26, 0.05));
+
+      // The HUD's own fixed heights: transport, the gaps, the dots, the mood
+      // name and the readout. Whatever the scale, that column plus the bottom
+      // padding has to leave the wordmark's band alone.
+      const columnAtUnitScale = 92 + 26 + 34 + 14 + 12 + 12 + 22;
+      expect(columnAtUnitScale * scale + 34 * scale, lessThan(540 * 0.75));
     });
 
     test('the update rows are only walkable where there is an updater', () {
