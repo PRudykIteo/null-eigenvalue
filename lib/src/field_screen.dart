@@ -975,7 +975,10 @@ class _FieldScreenState extends State<FieldScreen>
       case UpdateStage.ready:
         return u.handoff ?? 'RESTARTING';
       case UpdateStage.failed:
-        return 'UPDATE FAILED';
+        // The reason, where there is one. A hand-off that says which permission
+        // to grant is not a failure the reader can do nothing about, and
+        // flattening both into UPDATE FAILED hid the one that was actionable.
+        return u.handoff ?? 'UPDATE FAILED';
     }
   }
 
@@ -999,7 +1002,7 @@ class _FieldScreenState extends State<FieldScreen>
       case UpdateStage.ready:
         return u.handoff ?? 'RESTARTING';
       case UpdateStage.failed:
-        return 'DOWNLOAD FAILED';
+        return u.handoff ?? 'DOWNLOAD FAILED';
     }
   }
 

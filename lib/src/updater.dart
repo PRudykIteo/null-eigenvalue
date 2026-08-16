@@ -274,14 +274,13 @@ class Updater extends ChangeNotifier {
         exit(0);
       } else if (Platform.isAndroid) {
         // Android will not let an app replace itself: the APK goes to the
-        // system installer, which asks the user and does the work. The one
-        // thing that can stop it is the per-app "install unknown apps"
-        // permission, and the hand-off says so rather than appearing to have
-        // done nothing - on a television there is no notification shade to go
-        // looking in for the dialog that never came.
-        final launched = await AppInstaller.install(file.path);
-        handoff = launched ? 'CONFIRM ON SCREEN' : 'ALLOW UNKNOWN APPS, THEN RETRY';
-        stage = launched ? UpdateStage.ready : UpdateStage.failed;
+        // system installer, which asks the user and does the work. Whatever
+        // stops that is reported verbatim rather than as a failed download -
+        // on a television there is no notification shade to go looking in for
+        // the dialog that never came, and no console to ask why.
+        final reason = await AppInstaller.install(file.path);
+        handoff = reason == null ? 'CONFIRM ON SCREEN' : reason.toUpperCase();
+        stage = reason == null ? UpdateStage.ready : UpdateStage.failed;
       } else if (Platform.isMacOS) {
         // Mounting the image and dragging the app is the Mac's own idiom for
         // this, and it is the only one that works for an app the user
@@ -354,7 +353,13 @@ class Updater extends ChangeNotifier {
       final total = response.contentLength > 0
           ? response.contentLength
           : _assetBytes;
-      final dir = await Directory.systemTemp.createTemp('nulleig_update');
+      // Android insists the file land somewhere its FileProvider is configured
+      // to serve, so the native side names the directory; everywhere else the
+      // system temporary directory is exactly right.
+      final staging = await AppInstaller.stagingDirectory();
+      final dir = staging != null
+          ? Directory(staging)
+          : await Directory.systemTemp.createTemp('nulleig_update');
       final file = File('${dir.path}/${url.pathSegments.last}');
       final sink = file.openWrite();
       var received = 0;

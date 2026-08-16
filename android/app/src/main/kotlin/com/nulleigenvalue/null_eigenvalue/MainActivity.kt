@@ -34,13 +34,21 @@ class MainActivity : AudioServiceActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALLER_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    // Where Dart should put the download. Asked for rather than
+                    // assumed: the APK has to land under a root declared in
+                    // update_paths.xml or FileProvider refuses to make a URI
+                    // for it, and Dart's own idea of a temporary directory is
+                    // not that place.
+                    "stagingDir" -> {
+                        val dir = File(cacheDir, "updates")
+                        dir.mkdirs()
+                        result.success(dir.absolutePath)
+                    }
                     "install" -> {
                         val path = call.argument<String>("path")
-                        if (path == null) {
-                            result.success(false)
-                        } else {
-                            result.success(install(File(path)))
-                        }
+                        result.success(
+                            if (path == null) "no path given" else install(File(path))
+                        )
                     }
                     else -> result.notImplemented()
                 }
@@ -55,39 +63,48 @@ class MainActivity : AudioServiceActivity() {
     // dialog - the only way there is the settings screen, so a refusal opens it
     // rather than returning a failure the user cannot act on.
     //
-    // Returns false when the installer was not reached, which the Dart side
-    // turns into a line on the HUD. On a television nothing else would say so:
-    // there is no shade to go looking in for a dialog that never came.
-    private fun install(apk: File): Boolean {
-        if (!apk.isFile) return false
+    // Returns null when the installer has been opened, or a short reason when
+    // it has not. A reason rather than a bare false because this is the one
+    // path in the app with no console behind it: the failure lands on a
+    // television, and "UPDATE FAILED" with nothing after it is not something
+    // anyone can act on or report.
+    private fun install(apk: File): String? {
+        if (!apk.isFile) return "no file at ${apk.path}"
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !packageManager.canRequestPackageInstalls()
         ) {
             openUnknownSourcesSettings()
-            return false
+            return "allow unknown apps, then retry"
         }
 
-        // A file:// URI would be a FileUriExposedException on anything since
-        // Nougat, so the APK goes through the provider declared in the
-        // manifest, with a read grant that lasts as long as the installer does.
-        val uri: Uri = FileProvider.getUriForFile(
-            this,
-            "$packageName.updates",
-            apk,
-        )
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
         return try {
+            // A file:// URI would be a FileUriExposedException on anything
+            // since Nougat, so the APK goes through the provider declared in
+            // the manifest, with a read grant lasting as long as the installer.
+            //
+            // Inside the try, because getUriForFile throws when the file is not
+            // under a root named in update_paths.xml - which is exactly what
+            // happened while Dart was downloading to its own temporary
+            // directory, and it read on screen as a failed download.
+            val uri: Uri = FileProvider.getUriForFile(
+                this,
+                "$packageName.updates",
+                apk,
+            )
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
             startActivity(intent)
-            true
-        } catch (_: Exception) {
-            // A set with no package installer to answer the intent. Rare, and
-            // nothing the app can do about it beyond saying so.
-            false
+            null
+        } catch (e: Exception) {
+            // The class name earns its place: "failed to find configured root"
+            // and "no activity found to handle intent" are different repairs,
+            // and the person reading it is three metres from the screen with no
+            // other way to tell them apart.
+            "${e.javaClass.simpleName}: ${e.message?.take(90) ?: "no detail"}"
         }
     }
 

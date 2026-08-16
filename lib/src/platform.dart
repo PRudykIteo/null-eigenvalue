@@ -63,21 +63,40 @@ class AppInstaller {
   static const MethodChannel _channel =
       MethodChannel('nulleigenvalue/installer');
 
-  /// Opens the installer on [path]. False means the request never reached it -
-  /// almost always the per-app "install unknown apps" permission, which the
-  /// native side sends the user to rather than failing silently.
-  static Future<bool> install(String path) async {
-    if (!Platform.isAndroid) return false;
+  /// Where a downloaded APK has to be written for [install] to be able to hand
+  /// it over, or null where there is no installer to hand it to.
+  ///
+  /// Asked for rather than assumed. `FileProvider` will only make a URI for a
+  /// file under a root named in `update_paths.xml`, and Dart's own temporary
+  /// directory is not one: downloading there produced a file that arrived
+  /// whole and then could not be passed on, which read on screen as the
+  /// download having failed.
+  static Future<String?> stagingDirectory() async {
+    if (!Platform.isAndroid) return null;
     try {
-      final ok = await _channel.invokeMethod<bool>(
+      return await _channel.invokeMethod<String>('stagingDir');
+    } on PlatformException {
+      return null;
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  /// Opens the installer on [path]. Null means it opened; anything else is a
+  /// short reason to put on screen - most often the per-app "install unknown
+  /// apps" permission, which the native side sends the user to rather than
+  /// failing silently.
+  static Future<String?> install(String path) async {
+    if (!Platform.isAndroid) return 'not android';
+    try {
+      return await _channel.invokeMethod<String>(
         'install',
         <String, Object?>{'path': path},
       );
-      return ok ?? false;
-    } on PlatformException {
-      return false;
+    } on PlatformException catch (e) {
+      return e.message ?? e.code;
     } on MissingPluginException {
-      return false;
+      return 'no installer channel';
     }
   }
 }
