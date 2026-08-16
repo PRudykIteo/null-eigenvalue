@@ -32,31 +32,36 @@ android {
         versionName = flutter.versionName
     }
 
-    // Not a secret, and deliberately in the repository. The app is sideloaded
-    // rather than sold through a store, so there is no upload key to protect;
-    // what this buys is a signature that stays the same from build to build.
-    // The debug key below does not: Gradle generates one per machine, so every
-    // CI runner signs with a different key and a new release then refuses to
-    // install over the old one - "App not installed", and the only way through
-    // it is uninstalling first, which throws away the saved piece.
+    // The published build is signed with one fixed key, because Gradle's debug
+    // key is generated per machine: every CI runner would sign with a different
+    // one and a new release would then refuse to install over the old app -
+    // "App not installed", and the only way through it is uninstalling first,
+    // which throws away the saved piece.
     //
-    // Absent until the keystore workflow has been run once, hence the fallback.
+    // The key lives in the repository's secrets rather than in the repository.
+    // The workflow decodes it to this path and puts the password in the
+    // environment; both are absent everywhere else, and a build that cannot
+    // find them falls back to the debug key rather than failing. That is the
+    // right default for a local build - it produces a working APK to look at,
+    // and one that deliberately cannot pose as the published app.
     val sideloadStore = rootProject.file("nulleig-tv.jks")
+    val sideloadPassword: String? = System.getenv("TV_KEYSTORE_PASSWORD")
+    val signSideload = sideloadStore.exists() && !sideloadPassword.isNullOrBlank()
 
     signingConfigs {
-        if (sideloadStore.exists()) {
+        if (signSideload) {
             create("sideload") {
                 storeFile = sideloadStore
-                storePassword = "nulleigenvalue"
+                storePassword = sideloadPassword
                 keyAlias = "nulleig"
-                keyPassword = "nulleigenvalue"
+                keyPassword = sideloadPassword
             }
         }
     }
 
     buildTypes {
         release {
-            signingConfig = if (sideloadStore.exists()) {
+            signingConfig = if (signSideload) {
                 signingConfigs.getByName("sideload")
             } else {
                 signingConfigs.getByName("debug")

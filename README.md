@@ -165,19 +165,41 @@ adb install -r NullEigenvalue-TV.apk
 The `-r` replaces an installed copy in place, which works only while the
 signature stays the same. It would not by default: Gradle's debug key is
 generated per machine, so every CI runner would sign with a different one and
-Android would refuse the update. `android/nulleig-tv.jks` is a fixed key,
-committed to the repository, that every build is signed with instead.
+Android would refuse the update.
 
-It is deliberately not a secret — a sideloaded app has no store account behind
-it and nothing to protect, and the password is in
-`android/app/build.gradle.kts` in plain sight. What it buys is continuity, not
-trust. **Do not regenerate it**: a new key means the next build cannot install
-over this one either, and getting out of that costs an uninstall and the saved
-piece with it. If it is ever lost, it can be remade with the container:
+### The release key
+
+Published builds are signed with one fixed key, held in this repository's
+**secrets** rather than in the repository:
+
+| Secret | What it is |
+|---|---|
+| `TV_KEYSTORE_BASE64` | the PKCS12 keystore, base64 with no line breaks |
+| `TV_KEYSTORE_PASSWORD` | its password, used for both the store and the key |
+
+`tv-release.yml` decodes the first into `android/nulleig-tv.jks` and puts the
+second in the environment; `android/app/build.gradle.kts` uses them if both are
+there and falls back to the debug key if either is not. So a local build still
+produces a working APK, and one that deliberately cannot pose as the published
+app. That fallback is silent by nature, which is why the workflow reads the
+signature back off the finished APK and fails on `CN=Android Debug` — a
+debug-signed release installs perfectly well once and then refuses every update
+after it.
+
+**Do not replace the key once anything is installed from it.** A new key means
+the next build cannot install over the old app, and the way out is an uninstall,
+which takes the saved piece with it. A replacement, if one is ever needed:
 
 ```bash
-docker run --rm -v "${PWD}:/app" -w /app nulleig-tv keytool -genkeypair -v -keystore android/nulleig-tv.jks -storetype JKS -storepass nulleigenvalue -keypass nulleigenvalue -alias nulleig -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=Null Eigenvalue, OU=Sideload, O=Null Eigenvalue, C=PL"
+docker run --rm -v "${PWD}:/out" nulleig-tv keytool -genkeypair -v -keystore /out/nulleig-tv.jks -storetype PKCS12 -storepass CHOOSE_ONE -keypass CHOOSE_ONE -alias nulleig -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=Null Eigenvalue, OU=Sideload, O=Null Eigenvalue, C=PL"
 ```
+
+```bash
+base64 -w0 nulleig-tv.jks > TV_KEYSTORE_BASE64.txt
+```
+
+Then paste that file into the secret and delete it. The alias is `nulleig` and
+the build file expects that name.
 
 **Windows.** `NullEigenvalue-Setup.exe` installs into your own profile and
 needs no administrator. It is not signed, so SmartScreen will say it does not
