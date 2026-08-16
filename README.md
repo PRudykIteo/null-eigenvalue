@@ -163,13 +163,21 @@ adb install -r NullEigenvalue-TV.apk
 ```
 
 The `-r` replaces an installed copy in place, which works only while the
-signature stays the same. It does not by default: Gradle's debug key is
+signature stays the same. It would not by default: Gradle's debug key is
 generated per machine, so every CI runner would sign with a different one and
-Android would refuse the update. Running the **TV keystore** workflow once makes
-a fixed key, commits it, and every build after that installs over the last. It
-is deliberately not a secret — a sideloaded app has no store account behind it
-and nothing to protect — and it must not be regenerated afterwards, since a new
-key means the next build cannot install over this one either.
+Android would refuse the update. `android/nulleig-tv.jks` is a fixed key,
+committed to the repository, that every build is signed with instead.
+
+It is deliberately not a secret — a sideloaded app has no store account behind
+it and nothing to protect, and the password is in
+`android/app/build.gradle.kts` in plain sight. What it buys is continuity, not
+trust. **Do not regenerate it**: a new key means the next build cannot install
+over this one either, and getting out of that costs an uninstall and the saved
+piece with it. If it is ever lost, it can be remade with the container:
+
+```bash
+docker run --rm -v "${PWD}:/app" -w /app nulleig-tv keytool -genkeypair -v -keystore android/nulleig-tv.jks -storetype JKS -storepass nulleigenvalue -keypass nulleigenvalue -alias nulleig -keyalg RSA -keysize 4096 -validity 36500 -dname "CN=Null Eigenvalue, OU=Sideload, O=Null Eigenvalue, C=PL"
+```
 
 **Windows.** `NullEigenvalue-Setup.exe` installs into your own profile and
 needs no administrator. It is not signed, so SmartScreen will say it does not

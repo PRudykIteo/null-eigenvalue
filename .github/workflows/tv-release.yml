@@ -6,7 +6,7 @@
 # else, and an Actions artifact is behind a login. So this keeps one release,
 # tagged `tv-latest`, replaced on every run, which makes
 #
-#   https://github.com/doctorspider42/null-eigenvalue/releases/download/tv-latest/NullEigenvalue-TV.apk
+#   https://github.com/PRudykIteo/null-eigenvalue/releases/download/tv-latest/NullEigenvalue-TV.apk
 #
 # a permanent address for whatever the newest build is.
 name: TV release
@@ -99,7 +99,7 @@ jobs:
           else
             echo "::warning::android/nulleig-tv.jks is missing, so this is \
           signed with a per-runner debug key. Updates will NOT install over an \
-          older build - run the 'TV keystore' workflow once to fix that."
+          older build - see the keystore note in the README to remake it."
           fi
 
           cp "$APK" NullEigenvalue-TV.apk

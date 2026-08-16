@@ -17,5 +17,5 @@ key.properties
 # build, and a sideloaded app has no store account behind it and no upload key
 # to protect. What it buys is a signature that stays the same between builds,
 # so a new APK installs over the old app rather than being refused - which the
-# per-machine debug key cannot do. See .github/workflows/tv-keystore.yml.
+# per-machine debug key cannot do. Do not regenerate it; see the README.
 !nulleig-tv.jks
