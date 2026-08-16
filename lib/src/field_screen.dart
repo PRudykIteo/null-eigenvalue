@@ -76,6 +76,11 @@ class _FieldScreenState extends State<FieldScreen>
   /// that Escape knows whether it has something to leave.
   bool _fullscreen = false;
 
+  /// The scale the last build laid the chrome out at, kept only so the
+  /// diagnostics can report it. On a television it is derived from a screen
+  /// size nobody can see from here, which makes it worth printing.
+  double _uiScale = 1;
+
   /// Television only. Where the remote is pointing while the chrome is up, and
   /// which row of the panel is lit while the panel is open. Both are dead
   /// weight everywhere else - a pointer aims at what it is over, and a keyboard
@@ -448,8 +453,9 @@ class _FieldScreenState extends State<FieldScreen>
     if (key == LogicalKeyboardKey.arrowUp ||
         key == LogicalKeyboardKey.arrowDown) {
       final dir = key == LogicalKeyboardKey.arrowUp ? -1 : 1;
-      setState(() => _panelRow =
-          (_panelRow + dir).clamp(0, SettingsPanel.tvRowCount - 1));
+      final last =
+          SettingsPanel.tvRows(withUpdates: widget.updater.enabled) - 1;
+      setState(() => _panelRow = (_panelRow + dir).clamp(0, last));
       return KeyEventResult.handled;
     }
 
@@ -469,6 +475,10 @@ class _FieldScreenState extends State<FieldScreen>
         // Flipped here and read after Back: the reading is drawn on the HUD,
         // which is dead under the panel's scrim anyway.
         setState(() => _forceDiagnostics = !_forceDiagnostics);
+      } else if (_panelRow == SettingsPanel.tvUpdateRow) {
+        if (!widget.updater.busy) _onUpdateAction();
+      } else if (_panelRow == SettingsPanel.tvAutoRow) {
+        unawaited(widget.updater.setAuto(!widget.updater.auto));
       }
       // Nothing for the middle button to commit on the level's own row - it is
       // already moving under the left and right keys.
@@ -556,7 +566,7 @@ class _FieldScreenState extends State<FieldScreen>
     // sheet of the same thing. One number, so the transport, the dots and the
     // lettering all grow together and nothing has to be redrawn by hand.
     final shortest = media.size.shortestSide;
-    final scale = isDesktop
+    final double scale = isDesktop
         ? (shortest / 620).clamp(1.0, 1.5).toDouble()
         : isTv
             // A television is a phone read from three metres away. The logical
@@ -566,6 +576,7 @@ class _FieldScreenState extends State<FieldScreen>
             // something else entirely.
             ? (shortest / 300).clamp(1.6, 2.4).toDouble()
             : 1.0;
+    _uiScale = scale;
 
     // Overscan. A television may simply not show the outermost few per cent of
     // the picture, and nothing reports how much: MediaQuery.padding is about
@@ -739,38 +750,49 @@ class _FieldScreenState extends State<FieldScreen>
                   onTap: _closeSleep,
                   child: Container(
                     color: Colors.black.withValues(alpha: 0.55),
-                    child: Center(
-                      child: SettingsPanel(
-                        accent: palette.accent,
-                        remaining: c.sleepRemaining,
-                        choice: c.sleepChoice,
-                        scale: scale,
-                        showKeys: isDesktop,
-                        tv: isTv,
-                        focusRow: _panelRow,
-                        diagnosticsOn: _forceDiagnostics,
-                        onDiagnostics: () => setState(
-                            () => _forceDiagnostics = !_forceDiagnostics),
-                        // A phone has a hardware volume rocker an inch from
-                        // the thumb already holding it; a window does not, and
-                        // a television's own buttons move the television.
-                        volume: isDesktop || isTv ? c.volume : null,
-                        onVolume: c.setVolume,
-                        // Only where there is a version to compare. A build
-                        // CI did not cut would be claiming to be up to date
-                        // on no evidence at all.
-                        updates: widget.updater.enabled
-                            ? UpdatePanel(
-                                auto: widget.updater.auto,
-                                busy: widget.updater.busy,
-                                status: _updateStatus(),
-                                onAuto: (v) =>
-                                    unawaited(widget.updater.setAuto(v)),
-                                onCheck: () => unawaited(
-                                    widget.updater.check(force: true)),
-                              )
-                            : null,
-                        onPick: _pickSleep,
+                    // The scrim covers the whole screen - it is the thing being
+                    // dimmed - but what is written on it obeys the same overscan
+                    // inset as the rest of the chrome. Without this the panel was
+                    // the one piece laid out to the physical edge, and on a set
+                    // that hides its outermost few per cent the heading went with
+                    // it.
+                    child: Padding(
+                      padding: overscan,
+                      child: Center(
+                        child: SettingsPanel(
+                          accent: palette.accent,
+                          remaining: c.sleepRemaining,
+                          choice: c.sleepChoice,
+                          scale: scale,
+                          showKeys: isDesktop,
+                          tv: isTv,
+                          focusRow: _panelRow,
+                          diagnosticsOn: _forceDiagnostics,
+                          onDiagnostics: () => setState(
+                              () => _forceDiagnostics = !_forceDiagnostics),
+                          // A phone has a hardware volume rocker an inch from
+                          // the thumb already holding it; a window does not, and
+                          // a television's own buttons move the television.
+                          volume: isDesktop || isTv ? c.volume : null,
+                          onVolume: c.setVolume,
+                          // Only where there is a version to compare. A build
+                          // CI did not cut would be claiming to be up to date
+                          // on no evidence at all.
+                          updates: widget.updater.enabled
+                              ? UpdatePanel(
+                                  auto: widget.updater.auto,
+                                  busy: widget.updater.busy,
+                                  status: _updateStatus(),
+                                  onAuto: (v) =>
+                                      unawaited(widget.updater.setAuto(v)),
+                                  onCheck: () => unawaited(
+                                      widget.updater.check(force: true)),
+                                  primaryLabel: _updateAction,
+                                  onPrimary: _onUpdateAction,
+                                )
+                              : null,
+                          onPick: _pickSleep,
+                        ),
                       ),
                     ),
                   ),
@@ -861,7 +883,7 @@ class _FieldScreenState extends State<FieldScreen>
   /// downloaded rather than installed from a store and there is no store page
   /// to go and read; a phone would have nothing here but the word DEV.
   String? get _versionLabel {
-    if (!isDesktop) return null;
+    if (!isDesktop && !isTv) return null;
     return buildVersion.isEmpty ? '  DEV' : '  $buildVersion';
   }
 
@@ -916,6 +938,40 @@ class _FieldScreenState extends State<FieldScreen>
     }
   }
 
+  /// What the panel's one update row says. It is the same row whether there is
+  /// something to install or not, because on a remote every extra row is
+  /// another press, and which verb is meant is never in doubt.
+  String get _updateAction {
+    final u = widget.updater;
+    switch (u.stage) {
+      case UpdateStage.available:
+        return 'INSTALL ${u.latest}';
+      case UpdateStage.downloading:
+        return 'DOWNLOADING ${(u.progress * 100).round()}%';
+      case UpdateStage.ready:
+        return u.handoff ?? 'RESTARTING';
+      case UpdateStage.idle:
+      case UpdateStage.checking:
+      case UpdateStage.upToDate:
+      case UpdateStage.checkFailed:
+      case UpdateStage.failed:
+        return 'CHECK NOW';
+    }
+  }
+
+  void _onUpdateAction() {
+    final u = widget.updater;
+    // Nothing to do once the installer has been handed the file: the system is
+    // showing its own dialog over this one, and pressing again would download
+    // the same APK a second time.
+    if (u.stage == UpdateStage.ready) return;
+    if (u.stage == UpdateStage.available) {
+      unawaited(u.install());
+      return;
+    }
+    unawaited(u.check(force: true));
+  }
+
   void _onUpdateTap() {
     final u = widget.updater;
     if (u.stage != UpdateStage.available) return;
@@ -951,7 +1007,19 @@ class _FieldScreenState extends State<FieldScreen>
       if (ms != null) 'ms${ms ? 1 : 0}',
     ].join(' ');
     final session = c.sessionInfo();
-    return '${_status.line}\n$second${session.isEmpty ? '' : '\n$session'}';
+
+    // What the screen says it is. On a television this is the number the whole
+    // layout is derived from and the one thing that cannot be checked from
+    // here: sets report a logical size that has little to do with the panel in
+    // them, and picking a scale without it is guesswork. There is no console on
+    // a sideloaded build, so it is printed where the rest of the readings are.
+    final m = MediaQuery.of(context);
+    final geometry = '${m.size.width.round()}x${m.size.height.round()}'
+        ' dpr${m.devicePixelRatio.toStringAsFixed(1)}'
+        ' ui${_uiScale.toStringAsFixed(2)}';
+
+    return '${_status.line}\n$second\n$geometry'
+        '${session.isEmpty ? '' : '\n$session'}';
   }
 }
 

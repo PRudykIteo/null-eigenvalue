@@ -85,7 +85,8 @@ jobs:
         run: |
           flutter build apk --release \
             --build-name=${{ steps.v.outputs.version }} \
-            --build-number=${{ steps.v.outputs.build }}
+            --build-number=${{ steps.v.outputs.build }} \
+            --dart-define=NE_VERSION=${{ steps.v.outputs.version }}
 
       # Three things that each break silently: an APK with no engine installs
       # and then says the synthesis engine did not load; one with no leanback

@@ -1,10 +1,17 @@
 package com.nulleigenvalue.null_eigenvalue
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import androidx.core.content.FileProvider
 import com.ryanheise.audioservice.AudioServiceActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 // AudioServiceActivity rather than FlutterActivity: it is what binds the
 // activity to the media session's Flutter engine, so a notification or a
@@ -19,6 +26,83 @@ class MainActivity : AudioServiceActivity() {
         // that has to be dismissed with a remote before anything is heard.
         if (!packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
             requestNotificationPermission()
+        }
+    }
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, INSTALLER_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "install" -> {
+                        val path = call.argument<String>("path")
+                        if (path == null) {
+                            result.success(false)
+                        } else {
+                            result.success(install(File(path)))
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    // Hands a downloaded APK to the system installer.
+    //
+    // An app cannot replace itself on Android; it can only ask the package
+    // installer to, and only if the user has allowed it to be a source of
+    // installs. That permission is per-app and cannot be requested with a
+    // dialog - the only way there is the settings screen, so a refusal opens it
+    // rather than returning a failure the user cannot act on.
+    //
+    // Returns false when the installer was not reached, which the Dart side
+    // turns into a line on the HUD. On a television nothing else would say so:
+    // there is no shade to go looking in for a dialog that never came.
+    private fun install(apk: File): Boolean {
+        if (!apk.isFile) return false
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            openUnknownSourcesSettings()
+            return false
+        }
+
+        // A file:// URI would be a FileUriExposedException on anything since
+        // Nougat, so the APK goes through the provider declared in the
+        // manifest, with a read grant that lasts as long as the installer does.
+        val uri: Uri = FileProvider.getUriForFile(
+            this,
+            "$packageName.updates",
+            apk,
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        return try {
+            startActivity(intent)
+            true
+        } catch (_: Exception) {
+            // A set with no package installer to answer the intent. Rare, and
+            // nothing the app can do about it beyond saying so.
+            false
+        }
+    }
+
+    private fun openUnknownSourcesSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName"),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (_: Exception) {
+            // Some televisions do not carry that settings screen. The hand-off
+            // text still tells the user what to allow; this was only a shortcut.
         }
     }
 
@@ -37,5 +121,9 @@ class MainActivity : AudioServiceActivity() {
         if (!granted) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4242)
         }
+    }
+
+    private companion object {
+        const val INSTALLER_CHANNEL = "nulleigenvalue/installer"
     }
 }

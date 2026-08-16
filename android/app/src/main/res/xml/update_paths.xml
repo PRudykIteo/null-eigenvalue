@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the update FileProvider is allowed to hand out.
+
+     Only the cache, because that is where Dart's Directory.systemTemp lands on
+     Android and therefore where the downloaded APK is written. Deliberately not
+     the whole of the app's storage: this provider exists to pass one file to
+     the package installer, and a wider root would let anything holding a
+     content URI read the rest. -->
+<paths>
+    <cache-path name="updates" path="." />
+</paths>

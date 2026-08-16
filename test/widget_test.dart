@@ -52,9 +52,21 @@ void main() {
       // Adding a duration without extending the count leaves the last one
       // unreachable, and the handler turns row n into minutes[n - 1], so the
       // off-by-one picks the wrong duration rather than failing outright.
-      expect(SettingsPanel.tvRowCount, SettingsPanel.minutes.length + 3);
       expect(SettingsPanel.tvVolumeRow, SettingsPanel.minutes.length + 1);
       expect(SettingsPanel.tvDiagnosticsRow, SettingsPanel.tvVolumeRow + 1);
+      expect(
+          SettingsPanel.tvRows(withUpdates: false), SettingsPanel.minutes.length + 3);
+    });
+
+    test('the update rows are only walkable where there is an updater', () {
+      // The two update rows are drawn behind `updates != null` and counted
+      // behind the same condition. If the two ever disagree the D-pad either
+      // stops one row short of INSTALL or walks onto a row that is not there,
+      // and the second one is silent - the ring simply vanishes.
+      expect(SettingsPanel.tvUpdateRow, SettingsPanel.tvDiagnosticsRow + 1);
+      expect(SettingsPanel.tvAutoRow, SettingsPanel.tvUpdateRow + 1);
+      expect(SettingsPanel.tvRows(withUpdates: true),
+          SettingsPanel.tvRows(withUpdates: false) + 2);
     });
   });
 

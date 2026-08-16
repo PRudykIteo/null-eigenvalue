@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'platform.dart';
+
 /// What this build calls itself.
 ///
 /// Empty in a local `flutter run`, and that is the point: an updater that
@@ -13,19 +15,31 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// build that came from a release ever compares itself to one.
 const String buildVersion = String.fromEnvironment('NE_VERSION');
 
-const String _repo = 'doctorspider42/null-eigenvalue';
+const String _repo = 'PRudykIteo/null-eigenvalue';
 
 /// How the app is packaged here, and therefore what a newer one arrives as.
 ///
 /// The names have to agree with what the release workflow attaches. They are
 /// fixed rather than versioned so that the URL is stable, which is the same
-/// reason the .apk and the .ipa have fixed names.
+/// reason the television build has one address that never moves.
 String? get _assetForThisPlatform {
   if (Platform.isWindows) return 'NullEigenvalue-Setup.exe';
   if (Platform.isMacOS) return 'NullEigenvalue.dmg';
   if (Platform.isLinux) return 'NullEigenvalue-x86_64.AppImage';
+  if (Platform.isAndroid) return 'NullEigenvalue-TV.apk';
   return null;
 }
+
+/// Which release to ask about.
+///
+/// The desktop builds are cut from main and tagged `v<version>`, so `latest` -
+/// which GitHub defines as the newest release that is not a prerelease - is the
+/// right question. The television build is not on main: it publishes one
+/// standing `tv-latest` release, replaced on every run and marked prerelease
+/// precisely so it cannot displace a desktop one. `latest` would never return
+/// it, so it is asked for by tag.
+String get _releasePath =>
+    Platform.isAndroid ? '/releases/tags/tv-latest' : '/releases/latest';
 
 /// Where the update has got to.
 ///
@@ -111,12 +125,19 @@ class Updater extends ChangeNotifier {
   /// Whether a check or a download is in flight.
   bool get busy => _busy;
 
-  /// Whether the app should show anything at all about updates. A dev build
-  /// has no version to compare, and a phone gets its updates from AltStore or
-  /// from the .apk it was installed with.
+  /// Whether the app should show anything at all about updates. A dev build has
+  /// no version to compare, so it never offers one.
+  ///
+  /// Android is here for the television, where this matters more than anywhere
+  /// else: the set has no store to update from, and the alternative is typing a
+  /// sixty-character address into an on-screen keyboard with a D-pad every time
+  /// there is a new build.
   bool get enabled =>
       current.isNotEmpty &&
-      (Platform.isWindows || Platform.isMacOS || Platform.isLinux);
+      (Platform.isWindows ||
+          Platform.isMacOS ||
+          Platform.isLinux ||
+          Platform.isAndroid);
 
   /// Reads the one preference this object owns.
   ///
@@ -177,7 +198,7 @@ class Updater extends ChangeNotifier {
       }
 
       final release = await _getJson(
-        Uri.https('api.github.com', '/repos/$repo/releases/latest'),
+        Uri.https('api.github.com', '/repos/$repo$_releasePath'),
       );
       await prefs.setInt('updateCheckedAt', now);
       if (release == null) {
@@ -186,8 +207,7 @@ class Updater extends ChangeNotifier {
         return;
       }
 
-      final tag = (release['tag_name'] as String?) ?? '';
-      final version = tag.startsWith('v') ? tag.substring(1) : tag;
+      final version = versionOfRelease(release);
       if (version.isEmpty || !isNewerVersion(version, current)) {
         stage = UpdateStage.upToDate;
         notifyListeners();
@@ -252,6 +272,16 @@ class Updater extends ChangeNotifier {
         // never goes empty between the two.
         await Future<void>.delayed(const Duration(milliseconds: 900));
         exit(0);
+      } else if (Platform.isAndroid) {
+        // Android will not let an app replace itself: the APK goes to the
+        // system installer, which asks the user and does the work. The one
+        // thing that can stop it is the per-app "install unknown apps"
+        // permission, and the hand-off says so rather than appearing to have
+        // done nothing - on a television there is no notification shade to go
+        // looking in for the dialog that never came.
+        final launched = await AppInstaller.install(file.path);
+        handoff = launched ? 'CONFIRM ON SCREEN' : 'ALLOW UNKNOWN APPS, THEN RETRY';
+        stage = launched ? UpdateStage.ready : UpdateStage.failed;
       } else if (Platform.isMacOS) {
         // Mounting the image and dragging the app is the Mac's own idiom for
         // this, and it is the only one that works for an app the user
@@ -348,6 +378,23 @@ class Updater extends ChangeNotifier {
       client.close(force: true);
     }
   }
+}
+
+/// What version a release JSON is offering, or '' if it does not say.
+///
+/// The desktop releases are tagged `v<version>` and the tag is the answer. The
+/// television release cannot be: its tag is the standing `tv-latest`, which is
+/// what makes its download URL permanent, so the number lives in the title
+/// instead - "Null Eigenvalue TV 0.1.4", written by the release workflow.
+/// Matched by shape rather than by stripping a known prefix, so rewording the
+/// title cannot quietly stop updates from being offered.
+String versionOfRelease(Map<String, dynamic> release) {
+  if (Platform.isAndroid) {
+    final name = (release['name'] as String?) ?? '';
+    return RegExp(r'\d+(?:\.\d+)+').firstMatch(name)?.group(0) ?? '';
+  }
+  final tag = (release['tag_name'] as String?) ?? '';
+  return tag.startsWith('v') ? tag.substring(1) : tag;
 }
 
 /// True when [candidate] sorts after [current] as a dotted number.

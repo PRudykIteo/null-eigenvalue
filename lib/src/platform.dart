@@ -35,6 +35,38 @@ bool get isTv => Platform.isAndroid;
 bool get hasMediaSession =>
     Platform.isAndroid || Platform.isIOS || Platform.isMacOS;
 
+/// Handing a downloaded APK to the system installer.
+///
+/// Android only, and deliberately the whole of the app's install story: an app
+/// cannot replace itself there, it can only ask the package installer to do it.
+/// That is a `FileProvider` URI and an intent, which is a dozen lines of Kotlin
+/// in `MainActivity` against a plugin that would want considerably more trust
+/// than the one thing it is being asked for.
+class AppInstaller {
+  const AppInstaller._();
+
+  static const MethodChannel _channel =
+      MethodChannel('nulleigenvalue/installer');
+
+  /// Opens the installer on [path]. False means the request never reached it -
+  /// almost always the per-app "install unknown apps" permission, which the
+  /// native side sends the user to rather than failing silently.
+  static Future<bool> install(String path) async {
+    if (!Platform.isAndroid) return false;
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+        'install',
+        <String, Object?>{'path': path},
+      );
+      return ok ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+}
+
 /// The window, as far as this app cares about it: one switch.
 ///
 /// Implemented in each runner rather than taken from a package. It is about
