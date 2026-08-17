@@ -215,6 +215,13 @@ class Engine {
     WaveBank bank_;
     PitchSet pitches_;
     int mood_cur_ = 1;
+    // The instrument in force. For moods 0..5 this is a copy of the hand-tuned
+    // literal; for kMoodGenerated it is derived from the piece's seed, which
+    // is why it is held by value rather than referenced out of the table.
+    Mood mood_data_ = mood_at(1);
+
+    // Rebuilt whenever the mood or the seed changes.
+    void refresh_mood();
 
     Voice voice_[kVoices];
     Bell bell_[kBellPool];

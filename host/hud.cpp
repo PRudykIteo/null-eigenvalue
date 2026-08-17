@@ -138,7 +138,7 @@ void Hud::draw(const HudModel& m, const MoodPalette& p, Renderer& r, TextRendere
     }
 
     // ---- what is playing --------------------------------------------------
-    text.draw_centred(caps(m.mood_name), w_ * 0.5f, name_y_, Weight::Regular,
+    text.draw_centred(caps(m.instrument.c_str()), w_ * 0.5f, name_y_, Weight::Regular,
                       12.0f * scale_, 4.6f * scale_, p.accent.with_alpha(0.92f * a));
 
     // The frequency and the clock share a line: both are readings of what is

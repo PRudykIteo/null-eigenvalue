@@ -39,6 +39,12 @@ namespace ne {
 
 constexpr int kMoodCount = 6;
 
+// The mood field is three bits and only six values were ever used. Six means
+// "not one of the named instruments - derive it from the piece's seed", which
+// buys a continuous instrument space without touching the token format: every
+// token written before this still names the same one of the six.
+constexpr int kMoodGenerated = 6;
+
 struct Mood {
     const char* name;
     uint16_t scale;       // pitch class bitmask, bit 0 = root
@@ -153,6 +159,220 @@ inline const Mood& mood_at(int i) {
     if (i >= kMoodCount) i = kMoodCount - 1;
     return kMoods[i];
 }
+
+// ------------------------------------------------------- generated instruments
+//
+// The six above are hand-tuned and they are good because somebody listened to
+// them. This makes new ones, and the whole problem is that twenty parameters
+// drawn independently produce noise with a pitch in it rather than an
+// instrument.
+//
+// What keeps a generated one coherent is that the six are not six unrelated
+// presets. Read as data they lie along three axes, and the correlations are
+// consistent: the low instruments breathe slower, walk their root less often
+// and sit under a darker filter; the vast ones have both the long tail and the
+// long delay. So this draws four latent values and derives the twenty, rather
+// than drawing twenty.
+//
+//   weight   low, slow and dark .. high, quick and bright
+//   space    dry and close .. a room you could lose something in
+//   grain    pure tone .. the noise bed is the instrument
+//   tension  open fifths .. phrygian with a major third in it
+//
+// Two things come from lists rather than ranges, because a spectrum analysis
+// of the existing moods says the audible partials *are* the scale mask: a
+// random twelve-bit mask is a detuned cluster, not a mode. So the scale comes
+// from real modes ordered by tension, and the root lands on a whole MIDI note.
+struct ScaleFamily {
+    uint16_t mask;
+    const char* name;
+};
+
+// Ordered by tension, which is what `tension` indexes into. The first is two
+// notes and an octave of room; the last is Torsion's.
+inline const ScaleFamily* scale_families(int* count) {
+    static const ScaleFamily kFamilies[] = {
+        {0b0000000010000101, "open"},        // 0 2 7
+        {0b0000010010101001, "pentatonic"},  // 0 3 5 7 10
+        {0b0000001010100101, "pentatonic"},  // 0 2 5 7 9
+        {0b0000101011010101, "lydian"},      // 0 2 4 6 7 9 11
+        {0b0000101010110101, "ionian"},      // 0 2 4 5 7 9 11
+        {0b0000011010101101, "dorian"},      // 0 2 3 5 7 9 10
+        {0b0000011010110101, "mixolydian"},  // 0 2 4 5 7 9 10
+        {0b0000010010001101, "minor"},       // 0 2 3 7 10
+        {0b0000010110101101, "aeolian"},     // 0 2 3 5 7 8 10
+        {0b0000100100101101, "harmonic"},    // 0 2 3 5 7 8 11
+        {0b0000010110101011, "phrygian"},    // 0 1 3 5 7 8 10
+        {0b0000010110110011, "torsion"},     // 0 1 4 5 7 8 10
+    };
+    *count = (int)(sizeof(kFamilies) / sizeof(kFamilies[0]));
+    return kFamilies;
+}
+
+// Where each named mood sits on the four axes. Used only to describe a
+// generated instrument by what it is near - the six themselves are the literal
+// data above and are not regenerated from this.
+struct MoodAnchor {
+    const char* name;
+    float weight, space, grain, tension;
+};
+
+inline const MoodAnchor* mood_anchors() {
+    static const MoodAnchor kAnchors[kMoodCount] = {
+        {"Kernel", 0.25f, 0.45f, 0.25f, 0.55f},
+        {"Manifold", 0.55f, 0.30f, 0.25f, 0.40f},
+        {"Halo", 0.90f, 0.65f, 0.20f, 0.25f},
+        {"Torsion", 0.45f, 0.10f, 0.40f, 0.95f},
+        {"Limit", 0.15f, 0.90f, 0.20f, 0.12f},
+        {"Entropy", 0.05f, 0.70f, 0.95f, 0.05f},
+    };
+    return kAnchors;
+}
+
+struct Latent {
+    float weight = 0.5f, space = 0.5f, grain = 0.5f, tension = 0.5f;
+};
+
+inline Latent latent_for(uint32_t seed) {
+    Rng r;
+    r.seed(seed, 131);
+    Latent l;
+    // Uniform, including the corners. An earlier version pulled these toward
+    // the middle on the theory that the extremes were where nobody had
+    // listened - but a survey of 120 instruments rendered at the corners found
+    // no clipping, no NaN and nothing silent, so the caution was buying
+    // nothing and costing the variety that is the whole point.
+    l.weight = r.uni();
+    l.space = r.uni();
+    // The one axis that stays timid, and on evidence rather than nerves: of
+    // the six hand-tuned moods exactly one is a noise instrument. Squaring
+    // keeps that ratio without putting the loud end out of reach.
+    l.grain = r.uni() * r.uni();
+    l.tension = r.uni();
+    return l;
+}
+
+inline Mood mood_from_latent(const Latent& l, uint32_t seed) {
+    Rng r;
+    r.seed(seed, 149);
+    // A little independent wobble on top of the correlated derivation, so two
+    // instruments with the same weight are not the same instrument.
+    auto jit = [&r](float amount) { return 1.0f + r.bi() * amount; };
+
+    const float w = l.weight, sp = l.space, g = l.grain, t = l.tension;
+
+    Mood m{};
+    m.name = "";  // a generated instrument is described, not named
+
+    int n = 0;
+    const ScaleFamily* fam = scale_families(&n);
+    int idx = (int)(t * (float)n);
+    if (idx < 0) idx = 0;
+    if (idx >= n) idx = n - 1;
+    m.scale = fam[idx].mask;
+
+    // A whole MIDI note. The roots of the six span D1 to C2 and there is no
+    // reason to leave that register: below it the fundamental stops being a
+    // pitch, above it the thing is no longer a drone.
+    m.root_midi = 25 + (int)std::lround(12.0f * w);
+
+    m.low_semi = 0.0f;
+    m.high_semi = (30.0f + 21.0f * w) * jit(0.05f);
+
+    // Low instruments breathe slower and move their root less often. This is
+    // the strongest correlation in the six and the most obviously right one: a
+    // fast low drone is a rumble.
+    m.breath_scale = (2.6f - 1.7f * w) * jit(0.10f);
+    m.root_walk_sec = (560.0f - 350.0f * w) * jit(0.12f);
+
+    m.morph = (0.3f + 2.0f * w) * jit(0.08f);
+    m.morph_span = 0.85f * jit(0.15f);
+
+    m.cutoff_lo = 280.0f * std::pow(2.0f, 2.4f * w) * jit(0.10f);
+    m.cutoff_hi = 3000.0f * std::pow(2.0f, 2.3f * w) * jit(0.10f);
+    m.tilt = -0.32f + 0.62f * w + r.bi() * 0.06f;
+
+    m.rev_decay = (7.0f + 25.0f * sp) * jit(0.10f);
+    m.rev_size = (0.72f + 0.65f * sp) * jit(0.06f);
+    m.rev_mix = (0.36f + 0.24f * sp) * jit(0.06f);
+    m.delay_sec = (2.0f + 6.8f * sp) * jit(0.10f);
+    m.delay_fb = (0.50f + 0.22f * sp) * jit(0.05f);
+    m.delay_mix = (0.12f + 0.20f * sp) * jit(0.10f);
+
+    // Shimmer needs both height and space: pitch-shifted feedback under a low
+    // dark drone is a growl, not a halo.
+    m.shimmer = 0.03f + 0.70f * sp * w * jit(0.15f);
+
+    m.air = (0.05f + 0.60f * g) * jit(0.12f);
+    m.drive = (0.08f + 0.35f * g) * jit(0.15f);
+    // A noisy instrument needs less chorus; there is already movement in it.
+    m.chorus = (0.50f - 0.35f * g) * jit(0.12f);
+
+    // Bells only where Halo lives: high, clean and roomy. The finding they came
+    // from is in the comment above kMoods and a continuous space does not
+    // repeal it - against a warm held chord a struck note is an interruption
+    // however quiet it is. Even in the right region they are the exception.
+    m.bell_per_min = 0.0f;
+    m.bell_decay = (2.0f + 5.0f * sp) * jit(0.10f);
+    if (w > 0.55f && g < 0.45f && sp > 0.30f && r.uni() < 0.55f) {
+        m.bell_per_min = 2.5f + 3.0f * r.uni();
+    }
+
+    return m;
+}
+
+// The instrument a seed describes, when a piece asks for a generated one
+// rather than one of the six.
+inline Mood generated_mood(uint32_t seed) {
+    return mood_from_latent(latent_for(seed), seed);
+}
+
+// What to call it. A generated instrument has no name, so it is described by
+// the anchors it is nearest: "HALO" when it is close to one, "MANIFOLD / HALO"
+// when it sits between two. Honest, and it says something about what is about
+// to be heard rather than pretending to be a preset.
+//
+// Writes into `out` and always NUL-terminates.
+inline void describe_instrument(uint32_t seed, char* out, int cap) {
+    if (!out || cap <= 0) return;
+    out[0] = '\0';
+    const Latent l = latent_for(seed);
+    const MoodAnchor* a = mood_anchors();
+
+    int best = 0, second = 1;
+    float bd = 1e9f, sd = 1e9f;
+    for (int i = 0; i < kMoodCount; ++i) {
+        const float dw = l.weight - a[i].weight;
+        const float ds = l.space - a[i].space;
+        const float dg = l.grain - a[i].grain;
+        const float dt = l.tension - a[i].tension;
+        // Weight counts double: it is the axis the ear notices first.
+        const float d = 2.0f * dw * dw + ds * ds + dg * dg + dt * dt;
+        if (d < bd) {
+            sd = bd;
+            second = best;
+            bd = d;
+            best = i;
+        } else if (d < sd) {
+            sd = d;
+            second = i;
+        }
+    }
+
+    int k = 0;
+    const char* p = a[best].name;
+    while (*p && k < cap - 1) out[k++] = *p++;
+    // Close enough to one anchor to just be called that.
+    if (bd > 0.020f && k < cap - 4) {
+        out[k++] = ' ';
+        out[k++] = '/';
+        out[k++] = ' ';
+        p = a[second].name;
+        while (*p && k < cap - 1) out[k++] = *p++;
+    }
+    out[k] = '\0';
+}
+
 
 inline float midi_hz(float midi) {
     return 440.0f * std::pow(2.0f, (midi - 69.0f) / 12.0f);

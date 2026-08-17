@@ -97,6 +97,9 @@ class App {
     // audio; this is only the colour.
     MoodPalette palette() const;
 
+    // The name of the instrument, or what it sits between.
+    std::string instrument_name() const;
+
  private:
     ne_engine* engine_ = nullptr;
     int mood_ = 1;

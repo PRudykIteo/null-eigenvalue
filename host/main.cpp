@@ -181,7 +181,7 @@ int main(int argc, char** argv) {
             hm.mood = app.mood();
             hm.playing = app.playing();
             hm.root_hz = v.root_hz;
-            hm.mood_name = ne_mood_name(app.mood());
+            hm.instrument = app.instrument_name();
             hm.token = app.token();
             hm.elapsed = app.elapsed();
             hm.amount = 1.0f;
@@ -483,7 +483,7 @@ int main(int argc, char** argv) {
             hm.mood = app.mood();
             hm.playing = app.playing();
             hm.root_hz = v.root_hz;
-            hm.mood_name = ne_mood_name(app.mood());
+            hm.instrument = app.instrument_name();
             hm.token = app.token();
             hm.elapsed = app.elapsed();
             hm.amount = hud_amt;

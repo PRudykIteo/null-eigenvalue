@@ -5,6 +5,9 @@
 
 #include "palette.h"
 
+// For kMoodGenerated: what the mood field is allowed to say.
+#include "harmony.h"
+
 namespace ne {
 namespace {
 
@@ -72,10 +75,12 @@ bool decode_at(const std::string& s, size_t start, Piece* out) {
     }
 
     const int mood = (int)((payload >> 17) & 0x7);
-    // A token from a build that knows more moods than this one names an
-    // instrument that is not here. Clamping would play the wrong piece
-    // silently, which is exactly what the checksum exists to avoid.
-    if (mood >= kPaletteCount) return false;
+    // 0..5 are the six named instruments; 6 means the instrument is derived
+    // from this piece's own seed. 7 is unused and refused - a token from a
+    // build that knows something this one does not names music that is not
+    // here, and clamping would play the wrong piece silently, which is exactly
+    // what the checksum exists to avoid.
+    if (mood > kMoodGenerated) return false;
 
     out->seed = (uint32_t)((payload >> 20) & 0xFFFFFFFFull);
     out->mood = mood;

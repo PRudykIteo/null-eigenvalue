@@ -113,7 +113,8 @@ void Engine::reseed(uint32_t seed) {
     weather_dense_.seed(seed, 89);
     weather_space_.seed(seed, 97);
 
-    const Mood& m = mood_at(mood_cur_);
+    refresh_mood();
+    const Mood& m = mood_data_;
     root_walk_ = 0;
     root_target_ = (float)m.root_midi;
     root_cur_ = root_target_;
@@ -212,6 +213,14 @@ void Engine::reseed(uint32_t seed) {
     // The parameter smoothers cannot be dealt with here: they are driven from
     // the field, which the control block has not read yet. See smooth().
     prime_ = true;
+}
+
+// The instrument this piece is asking for: one of the six, or one derived
+// from its own seed.
+void Engine::refresh_mood() {
+    mood_data_ = (mood_cur_ == kMoodGenerated)
+                     ? generated_mood(p_seed_.load(std::memory_order_relaxed))
+                     : mood_at(mood_cur_);
 }
 
 void Engine::apply_mood(const Mood& m) {
@@ -326,7 +335,7 @@ void Engine::fire_bell(int off, float level) {
     }
     if (slot < 0) return;
 
-    const Mood& m = mood_at(mood_cur_);
+    const Mood& m = mood_data_;
     float bright = s_bright_.z;
     float f0 = midi_hz(root_cur_ + (float)off);
     while (f0 > sr_ * 0.16f) f0 *= 0.5f;
@@ -377,10 +386,11 @@ void Engine::control_block() {
     } else if (want_mood != mood_cur_) {
         mood_cur_ = want_mood;
         root_walk_ = 0;
-        apply_mood(mood_at(mood_cur_));
-        root_timer_ = mood_at(mood_cur_).root_walk_sec;
+        refresh_mood();
+        apply_mood(mood_data_);
+        root_timer_ = mood_data_.root_walk_sec;
     }
-    const Mood& m = mood_at(mood_cur_);
+    const Mood& m = mood_data_;
 
     float fx = p_x_.load(std::memory_order_relaxed);
     float fy = p_y_.load(std::memory_order_relaxed);

@@ -7,6 +7,8 @@
 #include <fstream>
 #include <sstream>
 
+#include "harmony.h"
+
 namespace ne {
 namespace {
 
@@ -70,7 +72,25 @@ void App::tick(float dt) {
 }
 
 MoodPalette App::palette() const {
-    return palette_lerp(palette_at(prev_mood_), palette_at(mood_), ease(blend_));
+    // A generated instrument has no palette of its own, so it borrows the one
+    // belonging to the anchor it is nearest - which is the same anchor the HUD
+    // names it after, so the colour and the word agree.
+    auto colours_for = [](int mood, uint32_t seed) {
+        if (mood != kMoodGenerated) return palette_at(mood);
+        const Latent l = latent_for(seed);
+        const MoodAnchor* a = mood_anchors();
+        int best = 0;
+        float bd = 1e9f;
+        for (int i = 0; i < kMoodCount; ++i) {
+            const float dw = l.weight - a[i].weight, ds = l.space - a[i].space;
+            const float dg = l.grain - a[i].grain, dt = l.tension - a[i].tension;
+            const float d = 2.0f * dw * dw + ds * ds + dg * dg + dt * dt;
+            if (d < bd) { bd = d; best = i; }
+        }
+        return palette_at(best);
+    };
+    return palette_lerp(colours_for(prev_mood_, seed_), colours_for(mood_, seed_),
+                        ease(blend_));
 }
 
 // ------------------------------------------------------------------- pieces
@@ -113,8 +133,22 @@ Piece App::bookmark() const {
 }
 
 void App::new_piece() {
-    apply_piece(random_piece(mood_, x_, y_));
+    // Generated, not one of the six. Rolling a new piece should be able to
+    // land anywhere in the instrument space, including between the named ones
+    // - that is the whole reason the space exists.
+    Piece p = random_piece(kMoodGenerated, x_, y_);
+    p.mood = kMoodGenerated;
+    apply_piece(p);
     save_prefs();
+}
+
+// What to call what is playing. One of the six has a name; anything else is
+// described by the anchors it sits between.
+std::string App::instrument_name() const {
+    if (mood_ != kMoodGenerated) return std::string(ne_mood_name(mood_));
+    char buf[64];
+    describe_instrument(seed_, buf, (int)sizeof(buf));
+    return std::string(buf);
 }
 
 bool App::load_token(const std::string& text) {
@@ -179,6 +213,7 @@ void App::set_render_scale(float s) {
 
 // --------------------------------------------------------------------- prefs
 
+
 std::string App::prefs_path() const {
     char* base = SDL_GetPrefPath("nulleigenvalue", "NullEigenvalue");
     if (!base) return std::string();
@@ -194,20 +229,12 @@ void App::load_prefs() {
     if (!f) return;
 
     std::string line;
-    Piece restored = piece();
-    bool have_piece = false;
     while (std::getline(f, line)) {
         const size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         const std::string key = line.substr(0, eq);
         const std::string val = line.substr(eq + 1);
-        if (key == "piece") {
-            Piece p;
-            if (parse_piece(val, &p)) {
-                restored = p;
-                have_piece = true;
-            }
-        } else if (key == "volume") {
+        if (key == "volume") {
             volume_ = (float)atof(val.c_str());
             volume_ = volume_ < 0.0f ? 0.0f : (volume_ > 1.0f ? 1.0f : volume_);
             ne_set_gain(engine_, volume_);
@@ -227,8 +254,19 @@ void App::load_prefs() {
             }
         }
     }
-    // Come back to the piece this was left on, from silence.
-    if (have_piece) apply_piece(restored);
+    // Deliberately no piece restored here. A launch is a new piece: this is a
+    // generative instrument, not a player with a resume button, and coming
+    // back to the same forty seconds every morning is what made it feel like
+    // one. What survives a launch is what was kept on purpose - the liked
+    // list - and the level and picture settings.
+    //
+    // The mood goes with it. The seed should not be a variation on whichever
+    // instrument happened to be selected last night.
+    // A launch is a new instrument, not a variation on whichever of the six
+    // happened to be selected last night.
+    Piece p = random_piece(kMoodGenerated, x_, y_);
+    p.mood = kMoodGenerated;
+    apply_piece(p);
 }
 
 void App::save_prefs() const {

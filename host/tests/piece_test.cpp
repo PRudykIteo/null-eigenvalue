@@ -118,15 +118,16 @@ int main() {
         check(!ne::parse_piece("NE1-0000-0000-0000", &p), "bad checksum refused");
         check(!ne::parse_piece("NE2-0000-0000-05GX", &p), "a future prefix refused");
         check(!ne::parse_piece("NE1-0000-0000-05G", &p), "too short");
-        // Mood 6 and 7 fit in the three bits but name no instrument here.
-        int refused = 0;
+        // 6 is a generated instrument and is legal; 7 names nothing.
+        int refused = 0, accepted = 0;
         for (uint32_t seed = 0; seed < 64; ++seed) {
-            for (int m = 6; m <= 7; ++m) {
-                ne::Piece bad{seed, m, 0.0f, 0.0f};
-                if (!ne::parse_piece(bad.quantised().token(), &p)) ++refused;
-            }
+            ne::Piece gen{seed, 6, 0.0f, 0.0f};
+            if (ne::parse_piece(gen.quantised().token(), &p)) ++accepted;
+            ne::Piece bad{seed, 7, 0.0f, 0.0f};
+            if (!ne::parse_piece(bad.quantised().token(), &p)) ++refused;
         }
-        check(refused == 128, "a mood this build does not have is refused, not clamped");
+        check(accepted == 64, "a generated instrument is a legal piece");
+        check(refused == 64, "a mood this build does not have is refused, not clamped");
     }
 
     // ---- a mistyped character must not become different music ---------------

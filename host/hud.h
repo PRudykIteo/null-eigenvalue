@@ -23,7 +23,7 @@ struct HudModel {
     std::string token;
     double elapsed = 0;   // seconds into the piece
     std::string version;   // empty in a build CI did not cut
-    const char* mood_name = "Manifold";
+    std::string instrument = "Manifold";
 
     // 0 hidden, 1 fully raised. The chrome crossfades rather than appearing.
     float amount = 0;
