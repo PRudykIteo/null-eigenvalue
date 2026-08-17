@@ -617,7 +617,21 @@ void Engine::control_block() {
 }
 
 void Engine::publish_vis() {
-    v_level_.store(clampf(peak_, 0.0f, 1.0f), std::memory_order_relaxed);
+    // Smoothed on the way out, for the same reason the bands below are.
+    //
+    // `peak_` is a sample-rate peak follower with a three-sample attack and a
+    // twenty-millisecond release, so on a 55 Hz drone it recovers most of the
+    // way between one waveform peak and the next: it ripples by about a third
+    // at twice the fundamental. A UI samples that once a frame and aliases it,
+    // which measured as a 12% mean and a 60% worst-case jump between frames -
+    // at 30, 60 and 144 fps alike, because the problem is the ripple and not
+    // the frame rate. On the core blob that is a flare that flickers.
+    //
+    // The same coefficient as the bands: about a 7 Hz corner, which flattens
+    // the ripple by a factor of fifteen while still following a swell.
+    float lvl = v_level_.load(std::memory_order_relaxed);
+    lvl += 0.06f * (clampf(peak_, 0.0f, 1.0f) - lvl);
+    v_level_.store(lvl, std::memory_order_relaxed);
     v_spark_.store(clampf(spark_, 0.0f, 1.0f), std::memory_order_relaxed);
     v_root_.store(midi_hz(root_cur_), std::memory_order_relaxed);
     v_motion_.store(clampf(motion_, 0.0f, 1.0f), std::memory_order_relaxed);

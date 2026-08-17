@@ -7,7 +7,7 @@ every piece it makes has a name you can write down, come back to, and send to
 somebody else.
 
 <p align="center">
-  <img src="macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png" width="180" alt="">
+  <img src="host/resources/nulleigenvalue.png" width="180" alt="">
 </p>
 
 ---
@@ -238,90 +238,106 @@ is a question with an answer rather than a guess.
 ## How it is built
 
 ```
-lib/                     the app: one screen, one painter, one controller
-  src/piece.dart           a piece, and the token that names it
-  src/platform.dart        the window, as one switch
-  src/updater.dart         how a downloaded build notices a new release
-packages/nulleig/        the engine
-  src/                     C++: synthesis, harmony, effects, and the device
-  macos/                   two forwarders and a podspec
-  windows/, linux/         CMake, one target each, same two sources
-  lib/nulleig.dart         the FFI binding
+host/                    the app
+  main.cpp                 window, event loop, engine lifecycle
+  app.cpp                  what the user has chosen, and the piece playing
+  piece.cpp                a piece, and the NE1 token that names it
+  nebula.cpp               the simulation behind the picture
+  render.cpp               the field: additive quads, rings, grain
+  text.cpp                 glyph atlases and the letterspaced lettering
+  hud.cpp / panel.cpp      the chrome, and everything behind the gear
+  updater.cpp / net.cpp    how a downloaded build notices a new release
+  font_data.h              two weights of Inter, subset and embedded
+  tests/                   the token format and the version comparison
+packages/nulleig/src/    the engine: synthesis, harmony, effects, the device
 windows/installer/       the Inno Setup script CI compiles
 tools/render/            offline harness: renders a WAV and measures it
-tools/icons/             regenerates every launcher icon
+tools/icons/             regenerates the launcher icons
 ```
 
-The engine is one C++ core compiled four ways: into a framework by the podspec
-for the Mac, into `libnulleig.so` by CMake for Linux, into `nulleig.dll` by
-CMake for Windows, and into a desktop program that renders WAV files. Audio is
-produced on the OS audio thread by [miniaudio](https://miniaud.io) — Dart is
-never in the path, so a janking or garbage-collecting UI cannot interrupt the
-sound. Dart sets a handful of atomics and reads a few back for the visuals.
+One language, one build system, one binary. SDL3 and the synthesis engine are
+linked in statically and the two fonts are bytes in the executable, so an
+install is a single file with nothing beside it that can go missing.
 
-The iOS and Android builds were dropped in favour of doing one platform
-properly; the C++ still compiles for both, and the CI jobs are commented out
-rather than deleted, so the way back is uncommenting them and restoring the
-platform folders from git.
+Audio is produced on the OS audio thread by [miniaudio](https://miniaud.io).
+The render callback talks straight to the synthesizer, so this loop can jank,
+stall or be dragged around by a window manager and the drone does not notice.
+What crosses between them is a handful of atomics.
+
+`nulleig.h` is still the engine's public surface even though nothing marshals
+across it any more. It is a clean line — the engine knows nothing about
+windows, and the app knows nothing about wavetables — and it is what the
+offline harness links against too.
+
+This began as a Flutter app over the same engine, reached by Dart FFI. The
+synthesis was never the expensive part; the picture was, and most of the cost
+was the framework drawing it. Dropping Flutter removed the FFI boundary, the
+mirrored structs and about six megabytes of runtime along with it.
 
 ### Hearing a change without opening the app
 
 ```bash
-cmake -S tools/render -B tools/render/build -DCMAKE_BUILD_TYPE=Release
-cmake --build tools/render/build
-./tools/render/build/nulleig_render out.wav 180 --mood 2
-./tools/render/build/nulleig_render tour.wav 360 --tour
+cmake -S tools/render -B build/render -DCMAKE_BUILD_TYPE=Release
+cmake --build build/render
+./build/render/nulleig_render out.wav 180 --mood 2
+./build/render/nulleig_render tour.wav 360 --tour
 ```
 
 It prints peak, per-second RMS spread, DC offset, a NaN count, a dropout count,
 how often the harmony moved, and how long the render took as a share of one
-core — which is the honest way to find out what the synthesis costs, with no
-window in the measurement. It exits non-zero if any of those is wrong.
-CI runs it over every mood on each push, and uploads the audio, so a change to
-the DSP can be listened to before it reaches a device.
+core — the honest way to find out what the synthesis costs, with no window in
+the measurement. It exits non-zero if any of those is wrong. CI runs it over
+every mood on each push and uploads the audio, so a change to the DSP can be
+listened to before it reaches anybody.
 
-### Looking at the UI without launching it
-
-```bash
-flutter test tools/preview/preview_test.dart   # writes tools/preview/out/*.png
-```
-
-The widget tester rasterises with a real canvas, so those PNGs are what the
-painter will actually draw. They are posed from hand-written engine snapshots,
-which is the point: the field can be put in states that would take twenty
-minutes of listening to catch by accident. (Text comes out as boxes — the test
-environment has no real font. Layout and metrics are still true.)
-
-The last three are shot at the size the runners open at rather than a narrow
-one, which is the thing a portrait preview cannot tell you: whether a
-composition designed for a tall narrow frame still holds when the frame is
-wider than it is tall, and whether the chrome scaled with it.
-
-### Building the app
+### Looking at the picture without a screen
 
 ```bash
-flutter pub get
-flutter build windows --release
-flutter build macos --release
-flutter build linux --release
+./build/host/null_eigenvalue --shot 300 frame.bmp --mood 2 --size 1920 1080
+./build/host/null_eigenvalue --shot 60 panel.bmp --panel
 ```
 
-They take `--dart-define=NE_VERSION=0.1.42`; without it the
-updater stays quiet, which is what you want while working on the app. On
-Windows, `flutter build` needs Developer Mode turned on — the Flutter tooling
-links each plugin into the build with a symlink, and creating one is a
-privileged operation otherwise:
+With `SDL_VIDEODRIVER=offscreen` this runs anywhere, including in a container
+and on a CI runner. It drives the synthesis by hand while it draws, so what
+comes out is a reading of a real engine rather than a frozen idle state — which
+is the whole point, because a blank frame is a real failure mode and an easy
+one to ship, since nothing crashes.
+
+### Building it
 
 ```bash
-start ms-settings:developers
+cmake -S host -B build/host -DCMAKE_BUILD_TYPE=Release
+cmake --build build/host
+ctest --test-dir build/host
 ```
+
+SDL3 is taken from the system when there is one and fetched at a pinned tag
+otherwise. Linux and macOS need libcurl for the updater; Windows uses WinHTTP,
+which is already in the OS.
+
+Pass `-DNE_VERSION=0.2.42` to make the build compare itself against the newest
+release. Without it the updater stays quiet, which is what you want while
+working on the app.
+
+The Windows binary is **cross-compiled from Linux** rather than built with
+MSVC, which is what CI does:
+
+```bash
+cmake -S host -B build/win -DCMAKE_TOOLCHAIN_FILE=host/cmake/mingw-w64.cmake \
+  -DCMAKE_PREFIX_PATH=/path/to/sdl3-for-windows
+```
+
+Nothing MSVC-specific is left, so one Linux job produces all three platforms
+except the Mac.
 
 ## Licence
 
-MIT. Every dependency is permissive: Flutter (BSD-3), miniaudio (public domain
-or MIT-0), `shared_preferences` (BSD-3). Nothing here is
-copyleft, so a build of this can be shipped under whatever terms you like.
+MIT. Every dependency is permissive: SDL3 (zlib), miniaudio (public domain or
+MIT-0), stb_truetype (public domain or MIT), Inter (SIL OFL 1.1, see
+`host/third_party/INTER-OFL.txt`), libcurl (MIT-like) on the two platforms that
+use it. Nothing here is copyleft, so a build of this can be shipped under
+whatever terms you like.
 
-The desktop version added no dependencies. The window switch and the updater
-are each a few dozen lines against packages that would have done considerably
-more than the one thing wanted.
+There is no UI framework and no state-management library. The chrome is about
+eight elements drawn by hand, which is less code than configuring something
+else to draw them would have been.

@@ -75,3 +75,12 @@ packages/nulleig/build/
 # they are a way of looking at the UI, not a golden test.
 tools/preview/out/
 
+
+# Signing keys never belong in the repo.
+*.jks
+*.keystore
+*.p12
+
+# Build output.
+build/
+host/build/

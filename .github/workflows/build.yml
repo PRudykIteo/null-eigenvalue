@@ -3,11 +3,6 @@ name: build
 # Every push to main cuts a release. That is deliberate: the app is downloaded
 # rather than installed from a store, and a download needs a plain public URL
 # to a file - a workflow artifact can only be fetched by a logged-in browser.
-#
-# The mobile jobs (android, ios) and the AltStore source that fed them are
-# commented out rather than deleted: the app is desktop-only for now, and the
-# engine still compiles for both, so reviving them is a matter of uncommenting
-# these blocks and restoring the platform folders from git.
 on:
   push:
     branches: [main]
@@ -22,263 +17,181 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FLUTTER_VERSION: '3.47.0'
+  # Pinned so every job builds the same SDL, and so a release upstream cannot
+  # change what a tag of this repo produces.
+  SDL_TAG: release-3.4.14
 
 jobs:
   # ---------------------------------------------------------------- version
   # One place decides what this build is called. The patch number is the run
-  # number, so every push to main is a strictly newer version than the last -
-  # which is what the in-app updater compares to decide whether to offer one.
+  # number, so every push to main is strictly newer than the last - which is
+  # what the in-app updater compares to decide whether to offer one.
   version:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
-      build: ${{ steps.v.outputs.build }}
     steps:
       - uses: actions/checkout@v4
       - id: v
         run: |
           set -euo pipefail
-          BASE=$(grep -m1 '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//' | cut -d+ -f1)
-          MINOR=$(echo "$BASE" | cut -d. -f1,2)
-          echo "version=${MINOR}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "build=${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          echo "building ${MINOR}.${GITHUB_RUN_NUMBER}"
+          BASE=$(head -1 VERSION | tr -d '[:space:]')
+
+          echo "version=${BASE}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "building ${BASE}.${GITHUB_RUN_NUMBER}"
 
   # ------------------------------------------------------------------ checks
-  # Runs in about a minute and catches the ordinary mistakes without waiting
-  # for a macOS runner. The DSP part is the interesting one: it renders the
-  # real engine and measures the result, so a change that makes the
-  # synthesizer clip, produce a NaN or fall silent fails here rather than in
-  # someone's headphones.
+  # Runs in about a minute and catches the ordinary mistakes. The DSP part is
+  # the interesting one: it renders the real engine and measures the result, so
+  # a change that makes the synthesizer clip, produce a NaN or fall silent
+  # fails here rather than in someone's headphones.
   checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-      - run: flutter pub get
-      - run: flutter analyze
-      - run: flutter test
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libcurl4-openssl-dev \
+            libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxfixes-dev libxss-dev libxtst-dev libgl1-mesa-dev \
+            libegl1-mesa-dev libgles2-mesa-dev libwayland-dev \
+            wayland-protocols libxkbcommon-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libdbus-1-dev libudev-dev \
+            libibus-1.0-dev libdecor-0-dev libsndio-dev
+
+      - name: Unit tests
+        run: |
+          set -euo pipefail
+          cmake -S host -B build/checks -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/checks
+          ctest --test-dir build/checks --output-on-failure
+
+      - name: Warnings are errors on our own code
+        run: |
+          set -euo pipefail
+          cmake -S host -B build/warn -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_FLAGS="-Wall -Wextra"
+          cmake --build build/warn 2>&1 | tee warn.log
+          # SDL and miniaudio are not ours to keep warning-free.
+          if grep -E "^/home/runner/work/[^ ]*/host/[^ ]*warning" warn.log; then
+            echo "::error::warnings in host/"
+            exit 1
+          fi
 
       - name: Build the offline renderer
         run: |
-          cmake -S tools/render -B tools/render/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build tools/render/build -j
+          cmake -S tools/render -B build/render -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/render
 
       - name: Render and measure every mood
         run: |
           set -euo pipefail
           for m in 0 1 2 3 4 5; do
-            ./tools/render/build/nulleig_render "/tmp/mood$m.wav" 45 --mood "$m"
+            ./build/render/nulleig_render "/tmp/mood$m.wav" 45 --mood "$m"
           done
           # The tour walks both axes and every mood transition, which is where
           # a synthesizer usually breaks.
-          ./tools/render/build/nulleig_render /tmp/tour.wav 120 --tour
+          ./build/render/nulleig_render /tmp/tour.wav 120 --tour
 
-      - name: Keep the audio for listening
+      - name: A piece is still reproducible from its name
+        run: |
+          set -euo pipefail
+          R=./build/render/nulleig_render
+          $R /tmp/a.wav 30 --mood 2 --seed 12345 --x 0.62 --y 0.38 > /dev/null
+          $R /tmp/b.wav 30 --mood 2 --seed 12345 --x 0.62 --y 0.38 > /dev/null
+          if ! cmp -s /tmp/a.wav /tmp/b.wav; then
+            echo "::error::the same piece rendered twice is not the same audio"
+            exit 1
+          fi
+          echo "same seed, mood and field -> byte-identical audio"
+
+      - name: The picture still draws
+        run: |
+          set -euo pipefail
+          # Headless, so the composition and the chrome are checked without a
+          # display. A blank frame is a real failure mode and an easy one to
+          # ship, because nothing crashes.
+          SDL_VIDEODRIVER=offscreen ./build/checks/null_eigenvalue \
+            --shot 120 /tmp/field.bmp --mood 2 --size 1280 800
+          SIZE=$(stat -c%s /tmp/field.bmp)
+          echo "frame is $SIZE bytes"
+          if [ "$SIZE" -lt 100000 ]; then
+            echo "::error::the rendered frame is suspiciously small"
+            exit 1
+          fi
+
+      - name: Keep the audio and the frame for listening and looking
         uses: actions/upload-artifact@v4
         with:
-          name: audio-preview
-          path: /tmp/*.wav
+          name: preview
+          path: |
+            /tmp/*.wav
+            /tmp/field.bmp
           retention-days: 7
 
-  # ---------------------------------------------- android / ios (suspended)
-  # Desktop-only for now. Uncomment both jobs, restore android/ and ios/ from
-  # git, put the mobile entries back in packages/nulleig/pubspec.yaml, and add
-  # `android, ios` back to the release job's `needs` and its downloads.
-  #
-  # Android also needs NDK_VERSION back in `env` - it was pinned so the runner
-  # installs exactly what Gradle is about to ask for, rather than failing
-  # halfway through a build to say so.
-
-#   # ----------------------------------------------------------------- android
-#   android:
-#     runs-on: ubuntu-latest
-#     needs: version
-#     steps:
-#       - uses: actions/checkout@v4
-#       - uses: actions/setup-java@v4
-#         with:
-#           distribution: temurin
-#           java-version: '17'
-#       - uses: subosito/flutter-action@v2
-#         with:
-#           flutter-version: ${{ env.FLUTTER_VERSION }}
-#           channel: stable
-#           cache: true
-#
-#       - name: Install the NDK
-#         run: |
-#           set -euo pipefail
-#           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-#           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" "cmake;3.22.1"
-#
-#       - run: flutter pub get
-#       - name: Build the APK
-#         run: |
-#           flutter build apk --release \
-#             --build-name=${{ needs.version.outputs.version }} \
-#             --build-number=${{ needs.version.outputs.build }}
-#
-#       - name: Confirm the engine is actually in the APK
-#         run: |
-#           set -euo pipefail
-#           APK=build/app/outputs/flutter-apk/app-release.apk
-#           # An APK missing libnulleig.so still installs and still opens - and
-#           # then shows "the synthesis engine did not load". Catch it here.
-#           if ! unzip -l "$APK" | grep -q 'lib/arm64-v8a/libnulleig.so'; then
-#             echo "::error::libnulleig.so is not in the APK"
-#             unzip -l "$APK" | grep 'lib/' || true
-#             exit 1
-#           fi
-#           ls -lh "$APK"
-#           # A fixed asset name, with the version in the release title. It is
-#           # what makes /releases/latest/download/<name> a stable URL, which is
-#           # what the AltStore manifest and the README both point at.
-#           cp "$APK" NullEigenvalue.apk
-#
-#       - uses: actions/upload-artifact@v4
-#         with:
-#           name: android-apk
-#           path: NullEigenvalue.apk
-#           if-no-files-found: error
-#
-#   # --------------------------------------------------------------------- ios
-#   # Unsigned. There are no Apple credentials in this repo and there is not
-#   # going to be: the app is sideloaded, and AltStore or Sideloadly signs it
-#   # with the user's own free Apple ID at install time.
-#   ios:
-#     runs-on: macos-15
-#     needs: version
-#     steps:
-#       - uses: actions/checkout@v4
-#       - uses: subosito/flutter-action@v2
-#         with:
-#           flutter-version: ${{ env.FLUTTER_VERSION }}
-#           channel: stable
-#           cache: true
-#       - run: flutter pub get
-#
-#       - name: Build (unsigned)
-#         run: |
-#           flutter build ios --release --no-codesign \
-#             --build-name=${{ needs.version.outputs.version }} \
-#             --build-number=${{ needs.version.outputs.build }}
-#
-#       - name: Package an .ipa
-#         run: |
-#           set -euo pipefail
-#           APP=build/ios/iphoneos/Runner.app
-#           if [ ! -d "$APP" ]; then
-#             echo "::error::no Runner.app - the build did not produce one"
-#             find build/ios -maxdepth 3 -print
-#             exit 1
-#           fi
-#           # Dart resolves the engine at run time out of the process image, so
-#           # the check is for a symbol rather than for a file. Where that symbol
-#           # lives depends on how CocoaPods linked the pod: Flutter's generated
-#           # Podfile uses `use_frameworks!`, which makes nulleig an embedded
-#           # dynamic framework, but a static pod would put it in the app binary
-#           # instead. Both are fine for dlsym; neither being true is a build
-#           # that launches and then cannot make a sound.
-#           echo "--- bundle ---"
-#           ls -1 "$APP" || true
-#           ls -1 "$APP/Frameworks" 2>/dev/null || echo "(no Frameworks)"
-#           FOUND=""
-#           for BIN in "$APP/Runner" "$APP"/Frameworks/*.framework/*; do
-#             [ -f "$BIN" ] || continue
-#             case "$BIN" in *.plist|*.png|*.nib|*.bundle) continue;; esac
-#             if nm -gU "$BIN" 2>/dev/null | grep -q ' _ne_create$'; then
-#               echo "ne_create found in $BIN"
-#               FOUND="$BIN"
-#             fi
-#           done
-#           if [ -z "$FOUND" ]; then
-#             echo "::error::ne_create is nowhere in the bundle - the engine was not linked in"
-#             exit 1
-#           fi
-#           # An .ipa is a zip with the .app inside Payload/. Doing it by hand,
-#           # rather than with -exportArchive, is what keeps this signing-free.
-#           mkdir -p "$RUNNER_TEMP/ipa/Payload"
-#           cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
-#           cd "$RUNNER_TEMP/ipa"
-#           zip -qry "$GITHUB_WORKSPACE/NullEigenvalue.ipa" Payload
-#           ls -lh "$GITHUB_WORKSPACE/NullEigenvalue.ipa"
-#
-#       - uses: actions/upload-artifact@v4
-#         with:
-#           name: ios-ipa
-#           path: NullEigenvalue.ipa
-#           if-no-files-found: error
-
   # ----------------------------------------------------------------- windows
-  # The desktop builds all pass NE_VERSION through --dart-define. That is what
-  # the in-app updater compares against the newest release tag; a build without
-  # it - which is every build made on a developer's machine - never offers an
-  # update at all.
+  # Cross-compiled from Linux with MinGW rather than built on a Windows runner.
+  # The app links SDL3 and the engine statically and reaches the network
+  # through WinHTTP, so there is nothing MSVC-specific left to need; one Linux
+  # job is faster and simpler than a second runner image.
   windows:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     needs: version
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-      - run: flutter config --enable-windows-desktop
-      - run: flutter pub get
+      - name: Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++-mingw-w64-x86-64 gcc-mingw-w64-x86-64
+
+      - name: Build SDL3 for Windows
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git /tmp/SDL
+          cmake -S /tmp/SDL -B /tmp/SDL/b -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$PWD/host/cmake/mingw-w64.cmake \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/tmp/w64 \
+            -DSDL_STATIC=ON -DSDL_SHARED=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_EXAMPLES=OFF
+          cmake --build /tmp/SDL/b
+          cmake --install /tmp/SDL/b
 
       - name: Build
-        run: >
-          flutter build windows --release
-          --build-name=${{ needs.version.outputs.version }}
-          --build-number=${{ needs.version.outputs.build }}
-          --dart-define=NE_VERSION=${{ needs.version.outputs.version }}
-
-      - name: Confirm the engine is next to the app
-        shell: bash
         run: |
           set -euo pipefail
-          OUT=build/windows/x64/runner/Release
-          # Same check as the APK's, for the same reason: a bundle without
-          # nulleig.dll installs, launches, and then says the synthesis engine
-          # did not load. The Flutter tooling copies it because the plugin's
-          # windows/CMakeLists.txt exports nulleig_bundled_libraries, and that
-          # is exactly the kind of wiring that breaks silently.
-          if [ ! -f "$OUT/nulleig.dll" ]; then
-            echo "::error::nulleig.dll is not in the bundle"
-            ls -R "$OUT" | head -50
+          cmake -S host -B host/build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$PWD/host/cmake/mingw-w64.cmake \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/tmp/w64 \
+            -DNE_VERSION=${{ needs.version.outputs.version }}
+          cmake --build host/build --target null_eigenvalue
+
+      - name: Confirm it needs nothing but Windows
+        run: |
+          set -euo pipefail
+          EXE=host/build/null_eigenvalue.exe
+          file "$EXE"
+          # Anything outside the system set means the installer would have to
+          # carry a DLL, which is exactly the wiring that breaks silently.
+          BAD=$(x86_64-w64-mingw32-objdump -p "$EXE" | grep "DLL Name" \
+            | grep -ivE "ADVAPI32|GDI32|IMM32|KERNEL32|OLEAUT32|SETUPAPI|SHELL32|USER32|VERSION|WINMM|WINHTTP|msvcrt|ole32|CRYPT32|WS2_32|dwmapi|uxtheme" || true)
+          if [ -n "$BAD" ]; then
+            echo "::error::unexpected DLL dependency"
+            echo "$BAD"
             exit 1
           fi
-          ls -lh "$OUT/nulleig.dll" "$OUT/null_eigenvalue.exe"
 
       - name: Build the installer
-        shell: pwsh
-        run: |
-          # Searched for rather than hardcoded. The runner image ships Inno
-          # Setup under Program Files (x86), but it has moved between image
-          # versions before and a wrong literal path fails as "file not found"
-          # ten minutes into the build.
-          $iscc = Get-ChildItem `
-            "C:\Program Files (x86)", "C:\Program Files", "$env:LOCALAPPDATA\Programs" `
-            -Filter ISCC.exe -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
-          if (-not $iscc) { throw "Inno Setup (ISCC.exe) is not on this runner" }
-          Write-Host "using $iscc"
-          & $iscc /DAppVersion=${{ needs.version.outputs.version }} windows\installer\null_eigenvalue.iss
-          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with $LASTEXITCODE" }
-
-      - name: Collect it
-        shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get install -y innoextract wine64 || true
+          # Inno Setup needs Windows; the runner has wine. If this proves
+          # flaky it moves back to a windows-latest job with ISCC.
+          curl -fsSL -o /tmp/is.exe https://jrsoftware.org/download.php/is.exe
+          wine /tmp/is.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART || true
+          ISCC="$HOME/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          wine "$ISCC" "/DAppVersion=${{ needs.version.outputs.version }}" \
+            windows/installer/null_eigenvalue.iss
           cp windows/installer/NullEigenvalue-Setup.exe .
-          ls -lh NullEigenvalue-Setup.exe
 
       - uses: actions/upload-artifact@v4
         with:
@@ -287,79 +200,50 @@ jobs:
           if-no-files-found: error
 
   # ------------------------------------------------------------------- macos
-  macos-desktop:
+  macos:
     runs-on: macos-15
     needs: version
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-      - run: flutter config --enable-macos-desktop
-      - run: flutter pub get
+      - run: brew install ninja
 
       - name: Build
-        run: >
-          flutter build macos --release
-          --build-name=${{ needs.version.outputs.version }}
-          --build-number=${{ needs.version.outputs.build }}
-          --dart-define=NE_VERSION=${{ needs.version.outputs.version }}
-
-      - name: Sign it to itself, and check the engine came along
         run: |
           set -euo pipefail
-          APP="build/macos/Build/Products/Release/Null Eigenvalue.app"
-          if [ ! -d "$APP" ]; then
-            echo "::error::no .app - the build did not produce one"
-            ls -R build/macos/Build/Products | head -40
-            exit 1
-          fi
-          # Same symbol check as the .ipa's. The Mac links the pod as an
-          # embedded framework, so this is where it should be - but the Dart
-          # binding falls back to the process image, and a static pod would put
-          # it there instead. Either is fine; neither is not.
-          FOUND=""
-          for BIN in "$APP/Contents/MacOS/Null Eigenvalue" \
-                     "$APP"/Contents/Frameworks/*.framework/Versions/A/*; do
-            [ -f "$BIN" ] || continue
-            if nm -gU "$BIN" 2>/dev/null | grep -q ' _ne_create$'; then
-              echo "ne_create found in $BIN"
-              FOUND="$BIN"
-            fi
-          done
-          if [ -z "$FOUND" ]; then
-            echo "::error::ne_create is nowhere in the bundle"
-            exit 1
-          fi
-
-          # Ad-hoc, because there are no Apple credentials in this repo and
-          # there are not going to be. On Apple silicon an unsigned binary will
-          # not launch at all, so "signed by nobody" is the floor rather than a
-          # nicety. Frameworks first: signing the bundle seals what is inside
-          # it, and re-signing a nested framework afterwards breaks that seal.
-          for F in "$APP"/Contents/Frameworks/*; do
-            [ -e "$F" ] || continue
-            codesign --force --sign - --timestamp=none "$F"
-          done
-          codesign --force --sign - --timestamp=none \
-            --entitlements macos/Runner/Release.entitlements "$APP"
-          codesign --verify --deep --strict "$APP"
+          cmake -S host -B host/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DNE_VERSION=${{ needs.version.outputs.version }}
+          cmake --build host/build --target null_eigenvalue
 
       - name: Package a disk image
         run: |
           set -euo pipefail
-          APP="build/macos/Build/Products/Release/Null Eigenvalue.app"
+          APP="Null Eigenvalue.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp host/build/null_eigenvalue "$APP/Contents/MacOS/"
+          cat > "$APP/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>Null Eigenvalue</string>
+            <key>CFBundleIdentifier</key><string>com.nulleigenvalue.nullEigenvalue</string>
+            <key>CFBundleExecutable</key><string>null_eigenvalue</string>
+            <key>CFBundleShortVersionString</key><string>${{ needs.version.outputs.version }}</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          PLIST
+          # Ad-hoc, because there are no Apple credentials in this repo and
+          # there are not going to be. On Apple silicon an unsigned binary will
+          # not launch at all, so "signed by nobody" is the floor.
+          codesign --force --sign - --timestamp=none "$APP"
+          codesign --verify --strict "$APP"
+
           STAGE="$RUNNER_TEMP/dmg"
           mkdir -p "$STAGE"
           cp -R "$APP" "$STAGE/"
-          # The one convention every Mac user already knows: the app, and an
-          # arrow pointing at Applications.
           ln -s /Applications "$STAGE/Applications"
-          hdiutil create -volname "Null Eigenvalue" \
-            -srcfolder "$STAGE" -ov -format UDZO NullEigenvalue.dmg
-          ls -lh NullEigenvalue.dmg
+          hdiutil create -volname "Null Eigenvalue" -srcfolder "$STAGE" \
+            -ov -format UDZO NullEigenvalue.dmg
 
       - uses: actions/upload-artifact@v4
         with:
@@ -371,40 +255,28 @@ jobs:
   # Deliberately not ubuntu-latest. An AppImage is only as portable as the
   # glibc it was linked against, and building on the newest image would produce
   # one that refuses to start on any distribution older than the runner.
-  linux-desktop:
+  linux:
     runs-on: ubuntu-22.04
     needs: version
     steps:
       - uses: actions/checkout@v4
-      - name: Install what the GTK runner needs
+      - name: Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build libgtk-3-dev
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-      - run: flutter config --enable-linux-desktop
-      - run: flutter pub get
+          sudo apt-get install -y ninja-build libcurl4-openssl-dev \
+            libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxfixes-dev libxss-dev libxtst-dev libgl1-mesa-dev \
+            libegl1-mesa-dev libgles2-mesa-dev libwayland-dev \
+            wayland-protocols libxkbcommon-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libdbus-1-dev libudev-dev \
+            libibus-1.0-dev libdecor-0-dev libsndio-dev
 
       - name: Build
-        run: >
-          flutter build linux --release
-          --build-name=${{ needs.version.outputs.version }}
-          --build-number=${{ needs.version.outputs.build }}
-          --dart-define=NE_VERSION=${{ needs.version.outputs.version }}
-
-      - name: Confirm the engine is in the bundle
         run: |
           set -euo pipefail
-          OUT=build/linux/x64/release/bundle
-          if [ ! -f "$OUT/lib/libnulleig.so" ]; then
-            echo "::error::libnulleig.so is not in the bundle"
-            ls -R "$OUT" | head -50
-            exit 1
-          fi
-          ls -lh "$OUT/lib/libnulleig.so" "$OUT/null_eigenvalue"
+          cmake -S host -B host/build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DNE_VERSION=${{ needs.version.outputs.version }}
+          cmake --build host/build --target null_eigenvalue
 
       - name: Package an AppImage
         run: |
@@ -412,10 +284,10 @@ jobs:
           export ARCH=x86_64
           DIR=NullEigenvalue.AppDir
           mkdir -p "$DIR/usr/bin"
-          cp -r build/linux/x64/release/bundle/* "$DIR/usr/bin/"
-          cp linux/nulleigenvalue.png "$DIR/nulleigenvalue.png"
+          cp host/build/null_eigenvalue "$DIR/usr/bin/"
+          cp host/resources/nulleigenvalue.png "$DIR/nulleigenvalue.png"
 
-          cat > "$DIR/nulleigenvalue.desktop" <<'EOF'
+          cat > "$DIR/nulleigenvalue.desktop" <<'DESKTOP'
           [Desktop Entry]
           Type=Application
           Name=Null Eigenvalue
@@ -424,18 +296,13 @@ jobs:
           Icon=nulleigenvalue
           Categories=AudioVideo;Audio;Player;
           Terminal=false
-          EOF
+          DESKTOP
 
-          # The runner is linked with an rpath of $ORIGIN/lib and finds its own
-          # data directory relative to the executable, so there is nothing to
-          # set up here - only a cd, so that a relative path in someone's shell
-          # cannot decide where the app thinks it lives.
-          cat > "$DIR/AppRun" <<'EOF'
+          cat > "$DIR/AppRun" <<'APPRUN'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
-          cd "$HERE/usr/bin" || exit 1
-          exec ./null_eigenvalue "$@"
-          EOF
+          exec "$HERE/usr/bin/null_eigenvalue" "$@"
+          APPRUN
           chmod +x "$DIR/AppRun"
 
           curl -fsSL -o appimagetool \
@@ -443,9 +310,7 @@ jobs:
           chmod +x appimagetool
           # --appimage-extract-and-run, because the runner has no FUSE and
           # installing libfuse2 to build a file is a strange thing to do.
-          ./appimagetool --appimage-extract-and-run \
-            "$DIR" NullEigenvalue-x86_64.AppImage
-          ls -lh NullEigenvalue-x86_64.AppImage
+          ./appimagetool --appimage-extract-and-run "$DIR" NullEigenvalue-x86_64.AppImage
 
       - uses: actions/upload-artifact@v4
         with:
@@ -456,16 +321,12 @@ jobs:
   # ----------------------------------------------------------------- release
   release:
     runs-on: ubuntu-latest
-    needs: [version, checks, windows, macos-desktop, linux-desktop]
+    needs: [version, checks, windows, macos, linux]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-      # All three into the working directory. The asset names are what the
-      # in-app updater looks for and what /releases/latest/download/<name>
-      # resolves to, so they are fixed and the version lives in the release
-      # title. Named one at a time rather than fetched wholesale, because a
-      # bare download-artifact would also drag in the checks job's forty
-      # megabytes of preview audio.
+      # Named one at a time rather than fetched wholesale, because a bare
+      # download-artifact would also drag in the checks job's preview audio.
       - uses: actions/download-artifact@v4
         with: { name: windows-installer }
       - uses: actions/download-artifact@v4
@@ -494,7 +355,8 @@ jobs:
           **Linux** — \`NullEigenvalue-x86_64.AppImage\`. \`chmod +x\` it and run it.
 
           All three check for a newer release themselves and can install it from inside
-          the app.
+          the app. Every piece has a name like \`NE1-9STP-RV1G-CR5F\`; paste one in with
+          \`V\` to hear exactly what someone else heard.
           EOF
           gh release create "v${V}" \
             NullEigenvalue-Setup.exe \
@@ -503,19 +365,3 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Null Eigenvalue ${V}" \
             --notes-file notes.md
-
-  # ------------------------------------------------- altstore (suspended)
-  # Pointed the AltStore source at the release we had just published. Called
-  # from here rather than triggered by the release event, because GitHub will
-  # not start a workflow from an event its own token raised.
-  #
-  # Suspended with the ios job. Reviving it needs altstore-source.yml,
-  # altstore.json and tools/altstore/ restored from git as well.
-
-#   altstore:
-#     needs: release
-#     permissions:
-#       contents: write
-#       pages: write
-#       id-token: write
-#     uses: ./.github/workflows/altstore-source.yml

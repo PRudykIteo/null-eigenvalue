@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates the launcher icons for the three desktops.
+"""Generates the launcher icons.
 
 The icon is the app: a dark field with one soft orb in it and a thin ring
 around the place the sound comes from. Drawn rather than exported from a design
@@ -72,11 +72,6 @@ def render(size):
     return out.resize((size, size), Image.LANCZOS)
 
 
-# The names in macos/Runner/Assets.xcassets/AppIcon.appiconset/Contents.json.
-# Xcode reads that manifest, not the directory, so these have to match it
-# exactly or the build quietly ships a missing icon.
-MACOS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
-
 # What goes into the .ico. Windows picks the nearest of these for the title
 # bar, the task bar, Alt-Tab and the desktop; 256 is the one Explorer uses for
 # a large-icon view, and leaving it out is what makes an app look blurry in
@@ -92,16 +87,8 @@ def main():
             cache[size] = render(size)
         return cache[size]
 
-    macos_dir = os.path.join(
-        ROOT, "macos", "Runner", "Assets.xcassets", "AppIcon.appiconset"
-    )
-    if os.path.isdir(macos_dir):
-        for size in MACOS_SIZES:
-            get(size).save(os.path.join(macos_dir, "app_icon_%d.png" % size))
-            print("macos", size)
-
     windows_icon = os.path.join(
-        ROOT, "windows", "runner", "resources", "app_icon.ico"
+        ROOT, "windows", "installer", "app_icon.ico"
     )
     if os.path.isdir(os.path.dirname(windows_icon)):
         # Pillow builds the whole multi-resolution .ico from one image, but it
@@ -118,10 +105,8 @@ def main():
         )
         print("windows", "app_icon.ico", WINDOWS_ICO_SIZES)
 
-    # Linux has no icon slot in the Flutter runner - the desktop environment
-    # takes one from the .desktop file instead, and the AppImage the release
-    # workflow builds is where that gets assembled.
-    linux_icon = os.path.join(ROOT, "linux", "nulleigenvalue.png")
+    # The AppImage carries this one and points its .desktop file at it.
+    linux_icon = os.path.join(ROOT, "host", "resources", "nulleigenvalue.png")
     if os.path.isdir(os.path.dirname(linux_icon)):
         get(512).save(linux_icon)
         print("linux", "nulleigenvalue.png", 512)

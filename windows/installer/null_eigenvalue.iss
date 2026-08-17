@@ -19,7 +19,7 @@
   #define AppVersion "0.0.0"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\..\build\windows\x64\runner\Release"
+  #define SourceDir "..\..\host\build"
 #endif
 
 #define AppName "Null Eigenvalue"
@@ -50,7 +50,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 
 OutputDir=.
 OutputBaseFilename=NullEigenvalue-Setup
-SetupIconFile=..\runner\resources\app_icon.ico
+SetupIconFile=app_icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2/max
 SolidCompression=yes
@@ -72,10 +72,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [Files]
-; The whole Flutter bundle: the runner, the engine DLLs, nulleig.dll and the
-; data directory. Recursed rather than listed, because the set of DLLs is
-; Flutter's business and it changes between versions.
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; One file. SDL3 and the synthesis engine are linked in, and the two fonts the
+; HUD is set in are bytes in the binary - so there is no bundle to recurse and
+; nothing beside the executable that can go missing.
+Source: "{#SourceDir}\{#AppExe}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
