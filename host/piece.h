@@ -26,13 +26,22 @@ struct Piece {
     float x = 0.5f;   // brightness
     float y = 0.45f;  // density
 
+    // Minutes into the piece, or 0 for the beginning.
+    //
+    // Not part of the sixty bits, and deliberately: a piece has no end, so a
+    // moment in one is a position rather than an identity - the same
+    // difference as between a record and a timecode. It rides as a suffix,
+    // which also means every token written before this existed still reads.
+    int at_minutes = 0;
+
     // The field survives a token at six bits per axis, so a piece that has
     // been through one is not quite the piece that was playing. Rounding on
     // the way *in* rather than only on the way out means what is on screen is
     // what the token says, instead of the two disagreeing in the last decimal.
     Piece quantised() const;
 
-    // `NE1-K7M2-9QRX-4B2F`, short enough to read down a phone.
+    // `NE1-K7M2-9QRX-4B2F`, or `NE1-K7M2-9QRX-4B2F+32` for half an hour in.
+    // Short enough to read down a phone either way.
     //
     // Sixty bits: the seed, the mood, six bits per field axis, five spare and
     // an eight-bit checksum, in Crockford's base32 - so I/L/O cannot be

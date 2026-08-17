@@ -202,6 +202,10 @@ NE_API void ne_render(ne_engine* e, float* out, int frames) {
     h->engine.render(out, frames);
 }
 
+NE_API void ne_skip(ne_engine* e, double seconds) {
+    if (e) ((Holder*)e)->engine.skip(seconds);
+}
+
 NE_API void ne_set_mood(ne_engine* e, int mood) {
     if (e) ((Holder*)e)->engine.set_mood(mood);
 }

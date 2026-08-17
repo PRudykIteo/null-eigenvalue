@@ -676,6 +676,53 @@ void Engine::get_vis(ne_vis* out) const {
     out->chord_change = v_chord_.load(std::memory_order_relaxed);
 }
 
+void Engine::skip(double seconds) {
+    if (seconds <= 0.0) return;
+
+    // Everything that decides what this piece *is* happens at control rate:
+    // which pitch a voice takes when it comes back in, when a bell falls, how
+    // the root walks, what the weather is doing. The per-sample loop only
+    // reads that state and turns it into a waveform. So a skip can run the
+    // control blocks and leave the DSP alone, which is why this is fast enough
+    // to be worth offering at all.
+    //
+    // The oscillator phases are the one exception - they advance per sample -
+    // and they are stepped analytically below rather than left at where the
+    // skip started. Without that, the three detuned copies of every voice
+    // would resume in the wrong relationship to each other and the beating
+    // that gives the drone its movement would be a different piece of luck.
+    const double sr = (double)sr_;
+
+    // The tails cannot be fast-forwarded: a reverb is its own history. So the
+    // last stretch is rendered properly into a scratch buffer, which fills the
+    // delay lines and the room the way arriving here in real time would have.
+    // Thirty seconds covers the longest decay any mood asks for.
+    const double warm = seconds < 30.0 ? seconds : 30.0;
+    const double dry = seconds - warm;
+
+    uint64_t blocks = (uint64_t)(dry * sr / (double)kControlBlock);
+    for (uint64_t b = 0; b < blocks; ++b) {
+        control_block();
+        for (int i = 0; i < kVoices; ++i) {
+            Voice& v = voice_[i];
+            for (int u = 0; u < kUnison; ++u) {
+                v.phase[u] += v.inc[u] * (float)kControlBlock;
+                v.phase[u] -= std::floor(v.phase[u]);
+            }
+        }
+        frames_done_.fetch_add((uint64_t)kControlBlock, std::memory_order_relaxed);
+    }
+
+    // Rendered in chunks so this needs no allocation proportional to `warm`.
+    float scratch[kControlBlock * 2];
+    uint64_t left = (uint64_t)(warm * sr);
+    while (left > 0) {
+        const int n = left > (uint64_t)kControlBlock ? kControlBlock : (int)left;
+        render(scratch, n);
+        left -= (uint64_t)n;
+    }
+}
+
 void Engine::render(float* out, int frames) {
     int n = 0;
     while (n < frames) {

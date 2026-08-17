@@ -154,6 +154,39 @@ int main() {
         check(accepted <= 4, "almost every single-character typo is rejected");
     }
 
+    // ---- a moment in a piece ------------------------------------------------
+    {
+        ne::Piece a = ne::Piece{12345u, 2, 0.62f, 0.38f}.quantised();
+        check(a.token().find('+') == std::string::npos,
+              "a piece with no moment has no suffix");
+
+        a.at_minutes = 32;
+        const std::string t = a.token();
+        check(t.size() > 18 && t.substr(t.size() - 3) == "+32", "the suffix is written");
+
+        ne::Piece b;
+        check(ne::parse_piece(t, &b), "and read back");
+        check(b.at_minutes == 32, "with the minutes intact");
+        check(b == a, "as the same piece");
+
+        // Backward compatibility is the whole reason this is a suffix rather
+        // than more bits: a token written before moments existed still reads,
+        // and means the beginning.
+        ne::Piece c;
+        check(ne::parse_piece("NE1-0003-0EAK-P069", &c), "an old token still reads");
+        check(c.at_minutes == 0, "and starts at the beginning");
+
+        // Punctuation after a token is somebody else's, not a moment.
+        ne::Piece d;
+        check(ne::parse_piece("NE1-0003-0EAK-P069!!", &d), "trailing punctuation");
+        check(d.at_minutes == 0, "is not mistaken for a moment");
+
+        ne::Piece e;
+        check(ne::parse_piece("listen: " + t + " it gets good there", &e),
+              "a moment survives being pasted out of a sentence");
+        check(e.at_minutes == 32, "with its minutes");
+    }
+
     if (failures == 0) {
         std::printf("piece: all checks passed\n");
         return 0;

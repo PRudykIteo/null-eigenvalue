@@ -51,6 +51,13 @@ class App {
     // first minute again.
     void restart();
 
+    // How far into the piece the engine is, in seconds.
+    double elapsed() const;
+
+    // The current piece with the moment stamped on it - what to write down
+    // when something worth coming back to has just happened.
+    Piece bookmark() const;
+
     // ------------------------------------------------------------- liked
 
     const std::vector<std::string>& liked() const { return liked_; }
@@ -101,6 +108,10 @@ class App {
 
     uint32_t seed_ = 0x4E756C6Cu;
     std::vector<std::string> liked_;
+
+    // ne_elapsed counts from ne_create, so where this piece began has to be
+    // remembered separately.
+    double started_at_ = 0;
 
     float volume_ = 0.7f;
     int sleep_choice_ = 0;

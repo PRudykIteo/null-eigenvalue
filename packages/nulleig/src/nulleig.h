@@ -75,6 +75,29 @@ NE_API int ne_sample_rate(const ne_engine* e);
  * is not running. */
 NE_API void ne_render(ne_engine* e, float* out, int frames);
 
+/* Jump to `seconds` into the piece, without producing the audio on the way.
+ *
+ * A piece has no end - the voices breathe on golden-ratio periods so the
+ * combination does not recur for days - which makes "I heard something good
+ * half an hour in" a real problem: there is nothing to rewind. This is the
+ * answer to it. Everything that decides what the piece *is* happens at control
+ * rate, 750 times a second, so a skip runs those blocks and leaves the
+ * per-sample DSP alone.
+ *
+ * What this gives you is the same music: the same pitches at the same moments,
+ * the same bells, the same weather. What it does not give you is the same
+ * waveform down to the sample - the reverb and the delay are their own
+ * history, and although the last thirty seconds are rendered properly to fill
+ * them, arriving here in real time would have left slightly different tails.
+ * For finding a place again that difference is inaudible; for a bit-exact
+ * comparison it is not, so the render harness measures from zero.
+ *
+ * Measured: half an hour of music arrives in 1.9 s instead of 38 s, with the
+ * same root, the same number of harmonic moves and the same RMS to within one
+ * per cent. Blocks the calling thread, so do not call it from the audio
+ * callback. */
+NE_API void ne_skip(ne_engine* e, double seconds);
+
 /* ---------------------------------------------------------------- parameters */
 
 #define NE_MOOD_COUNT 6

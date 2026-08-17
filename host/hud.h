@@ -21,6 +21,7 @@ struct HudModel {
     bool playing = false;
     float root_hz = 55.0f;
     std::string token;
+    double elapsed = 0;   // seconds into the piece
     std::string version;   // empty in a build CI did not cut
     const char* mood_name = "Manifold";
 

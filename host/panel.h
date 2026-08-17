@@ -26,6 +26,7 @@ enum class PanelAction {
     NewPiece,
     RestartPiece,
     CopyPiece,
+    CopyMoment,
     PastePiece,
     LikePiece,
     PlayLiked,    // value = index into liked

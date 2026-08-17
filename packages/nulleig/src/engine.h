@@ -98,6 +98,10 @@ class Engine {
 
     void render(float* out, int frames);
 
+    // Advance to `seconds` into the piece without producing the audio on the
+    // way. See ne_skip in nulleig.h for what this is and is not.
+    void skip(double seconds);
+
     // Setters: any thread.
     void set_mood(int m) { p_mood_.store(m, std::memory_order_relaxed); }
     int mood() const { return p_mood_.load(std::memory_order_relaxed); }

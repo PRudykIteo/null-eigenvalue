@@ -27,6 +27,7 @@ const KeyBinding kKeys[] = {
     {"SCROLL", "VOLUME"},      {"- / =", "VOLUME"},      {"F", "FULL SCREEN"},
     {"S", "THIS PANEL"},       {"D", "DIAGNOSTICS"},     {"N", "NEW PIECE"},
     {"R", "RESTART PIECE"},    {"L", "LIKE THIS PIECE"}, {"C", "COPY ITS NAME"},
+    {"M", "COPY THIS MOMENT"},
     {"V", "PASTE A PIECE"},    {"ESC", "CLOSE / WINDOW"},
 };
 
@@ -152,6 +153,7 @@ void Panel::build(const PanelModel& m, float w, float h, float scale,
     put(ry, right_x, Kind::Row, "NEW", row_h, PanelAction::NewPiece, 0);
     put(ry, right_x, Kind::Row, "RESTART", row_h, PanelAction::RestartPiece, 0);
     put(ry, right_x, Kind::Row, "COPY", row_h, PanelAction::CopyPiece, 0);
+    put(ry, right_x, Kind::Row, "COPY THIS MOMENT", row_h, PanelAction::CopyMoment, 0);
     put(ry, right_x, Kind::Row, "PASTE", row_h, PanelAction::PastePiece, 0);
     put(ry, right_x, Kind::Row, m.liked ? "LIKED" : "LIKE", row_h,
         PanelAction::LikePiece, 0, m.liked);

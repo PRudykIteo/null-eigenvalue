@@ -90,6 +90,7 @@ Piece Piece::quantised() const {
     Piece p;
     p.seed = seed;
     p.mood = mood;
+    p.at_minutes = at_minutes < 0 ? 0 : at_minutes;
     p.x = decode_axis(encode_axis(x));
     p.y = decode_axis(encode_axis(y));
     return p;
@@ -112,27 +113,52 @@ std::string Piece::token() const {
     out.append(body + 4, 4);
     out += '-';
     out.append(body + 8, 4);
+    if (at_minutes > 0) {
+        char suffix[16];
+        std::snprintf(suffix, sizeof(suffix), "+%d", at_minutes);
+        out += suffix;
+    }
     return out;
 }
 
 bool Piece::operator==(const Piece& o) const {
-    return seed == o.seed && mood == o.mood && payload_of(*this) == payload_of(o);
+    return seed == o.seed && mood == o.mood && at_minutes == o.at_minutes &&
+           payload_of(*this) == payload_of(o);
 }
 
 bool parse_piece(const std::string& input, Piece* out) {
     if (!out) return false;
+    // The plus is kept along with the alphanumerics: it is the one separator
+    // that means something rather than being decoration a chat window added.
     std::string cleaned;
     cleaned.reserve(input.size());
     for (char c : input) {
         if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
-        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z')) cleaned += c;
+        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || c == '+') {
+            cleaned += c;
+        }
     }
 
     // Every place the prefix appears, not only the start: the checksum is what
     // decides whether a candidate really is one.
     for (size_t at = cleaned.find(kPrefix); at != std::string::npos;
          at = cleaned.find(kPrefix, at + 1)) {
-        if (decode_at(cleaned, at + kPrefixLen, out)) return true;
+        if (decode_at(cleaned, at + kPrefixLen, out)) {
+            // A "+32" immediately after the body is a moment in the piece.
+            // Anything else there is somebody else's punctuation.
+            size_t k = at + kPrefixLen + kTokenChars;
+            out->at_minutes = 0;
+            if (k < cleaned.size() && cleaned[k] == '+') {
+                int mins = 0, digits = 0;
+                for (++k; k < cleaned.size() && cleaned[k] >= '0' &&
+                          cleaned[k] <= '9' && digits < 5;
+                     ++k, ++digits) {
+                    mins = mins * 10 + (cleaned[k] - '0');
+                }
+                if (digits > 0) out->at_minutes = mins;
+            }
+            return true;
+        }
     }
     return false;
 }
@@ -155,7 +181,7 @@ Piece random_piece(int mood, float x, float y) {
     p.mood = mood;
     p.x = x;
     p.y = y;
-    return p.quantised();
+    return p.quantised();  // a new piece always starts at its beginning
 }
 
 }  // namespace ne

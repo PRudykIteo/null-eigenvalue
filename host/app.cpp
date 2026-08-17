@@ -91,6 +91,25 @@ void App::apply_piece(const Piece& p) {
     // before it reads the mood: setting them separately reseeds against the
     // *old* mood and pitches every voice from the wrong scale.
     ne_set_piece(engine_, seed_, mood_, x_, y_);
+    started_at_ = ne_elapsed(engine_);
+
+    // A token can name a moment as well as a piece. Getting there means
+    // running the harmony forward without producing the audio, which takes
+    // about two seconds for half an hour - see ne_skip.
+    if (q.at_minutes > 0) {
+        ne_skip(engine_, (double)q.at_minutes * 60.0);
+    }
+}
+
+double App::elapsed() const {
+    const double e = ne_elapsed(engine_) - started_at_;
+    return e < 0.0 ? 0.0 : e;
+}
+
+Piece App::bookmark() const {
+    Piece p = piece();
+    p.at_minutes = (int)(elapsed() / 60.0);
+    return p;
 }
 
 void App::new_piece() {

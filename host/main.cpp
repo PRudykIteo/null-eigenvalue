@@ -183,6 +183,7 @@ int main(int argc, char** argv) {
             hm.root_hz = v.root_hz;
             hm.mood_name = ne_mood_name(app.mood());
             hm.token = app.token();
+            hm.elapsed = app.elapsed();
             hm.amount = 1.0f;
             if (opt.show_panel) {
                 pm.amount = 1.0f;
@@ -301,6 +302,13 @@ int main(int argc, char** argv) {
                     if (k == SDLK_R) app.restart();
                     if (k == SDLK_L) app.toggle_liked();
                     if (k == SDLK_C) SDL_SetClipboardText(app.token().c_str());
+                    // The moment, not just the piece. Pressing this after
+                    // something good is the only way back to it: a piece runs
+                    // for days without repeating and there is nothing to
+                    // rewind, so the way back is to write down where you were.
+                    if (k == SDLK_M) {
+                        SDL_SetClipboardText(app.bookmark().token().c_str());
+                    }
                     if (k == SDLK_V) {
                         char* clip = SDL_GetClipboardText();
                         if (clip) {
@@ -360,6 +368,10 @@ int main(int argc, char** argv) {
                             case ne::PanelAction::LikePiece: app.toggle_liked(); break;
                             case ne::PanelAction::CopyPiece:
                                 SDL_SetClipboardText(app.token().c_str());
+                                break;
+                            case ne::PanelAction::CopyMoment:
+                                SDL_SetClipboardText(
+                                    app.bookmark().token().c_str());
                                 break;
                             case ne::PanelAction::PastePiece: {
                                 char* clip = SDL_GetClipboardText();
@@ -473,6 +485,7 @@ int main(int argc, char** argv) {
             hm.root_hz = v.root_hz;
             hm.mood_name = ne_mood_name(app.mood());
             hm.token = app.token();
+            hm.elapsed = app.elapsed();
             hm.amount = hud_amt;
             hud.layout(hm, (float)w, (float)h, scale_for(window, w, h), text);
             hud.draw(hm, state.palette, draw, text);

@@ -11,6 +11,20 @@ namespace {
 constexpr float kDotGap = 22.0f;
 constexpr float kDotR = 3.0f;
 
+// How far in. A piece has no length, so this is not a position in something -
+// it is how long you have been listening, and the only number that makes
+// "half an hour in" a thing you can write down.
+std::string elapsed_label(double seconds) {
+    const int t = (int)seconds;
+    char buf[32];
+    if (t >= 3600) {
+        std::snprintf(buf, sizeof(buf), "%d:%02d:%02d", t / 3600, (t / 60) % 60, t % 60);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%d:%02d", t / 60, t % 60);
+    }
+    return std::string(buf);
+}
+
 std::string hz_label(float hz) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.1f Hz", (double)hz);
@@ -127,8 +141,11 @@ void Hud::draw(const HudModel& m, const MoodPalette& p, Renderer& r, TextRendere
     text.draw_centred(caps(m.mood_name), w_ * 0.5f, name_y_, Weight::Regular,
                       12.0f * scale_, 4.6f * scale_, p.accent.with_alpha(0.92f * a));
 
-    text.draw_centred(hz_label(m.root_hz), w_ * 0.5f, hz_y_, Weight::Light,
-                      10.0f * scale_, 2.4f * scale_, Colour{1, 1, 1, 0.26f * a});
+    // The frequency and the clock share a line: both are readings of what is
+    // true now, and neither is worth a row of its own.
+    text.draw_centred(hz_label(m.root_hz) + "   " + elapsed_label(m.elapsed),
+                      w_ * 0.5f, hz_y_, Weight::Light, 10.0f * scale_,
+                      2.4f * scale_, Colour{1, 1, 1, 0.26f * a});
 
     // The name of what is playing, directly under the frequency because the
     // two are the same kind of thing - a reading of what is currently true.
