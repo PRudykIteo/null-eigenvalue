@@ -26,6 +26,14 @@ gesture has a sound of its own and not only a result.
 Click once to show the transport and the six moods; it hides itself again after
 a few seconds. While it is silent, clicking anywhere starts it.
 
+Pausing stops the piece rather than muting it. The harmony, the weather and
+every voice hold exactly where they were — what fades out over the next few
+seconds is that held moment, and the clock under the frequency stops with it.
+Come back an hour later and the piece carries on from the bar you left, not
+from wherever it would have wandered to on its own. The one thing that keeps
+its own time through a pause is the sleep timer, which is a radio's sleep
+switch and has a bed to get you into.
+
 **Kernel** is the null space, as low and as still as the thing goes.
 **Manifold** is the warm, wide default. **Halo** is lydian, high, shimmering,
 and the only mood that rings. **Torsion** is tense and metallic. **Limit** is
@@ -46,19 +54,22 @@ nothing else. The keyboard reaches everything:
 | wheel, or `-` / `=` | volume |
 | `F` or `F11` | full screen |
 | `S` | sleep timer, and everything else behind the gear |
-| `D` | diagnostics |
 | `N` | a new piece |
 | `R` | this piece again from the top |
 | `L` | keep this piece |
 | `C` | copy its name |
 | `esc` | leave full screen, or close the panel |
 
-The same list is behind the gear, beside the sleep durations — a chromeless app
-that also hides its shortcuts is just a locked door.
+The same list is behind the gear — a chromeless app that also hides its
+shortcuts is just a locked door — as a table across the foot of the panel
+rather than a column down one side of it, which is what used to push the
+bottom of it off the end of a laptop screen.
 
-The gear is where everything the app can be told to do now lives: sleep, level,
-pieces, picture, updates and the keys, in two columns on a window wide enough
-for them. The
+The gear is in the top right corner, opposite the wordmark, and it is where
+everything the app can be told to do lives: sleep, level, pieces, picture and
+updates, in three columns with the keys underneath. On a window too narrow for
+that width the whole grid shrinks to fit rather than a column walking off the
+edge of it. The
 running version sits after the wordmark at the top, at half its weight — an app
 you downloaded has no store page to go and read, so "which one am I running"
 has to be answerable from the app itself.
@@ -68,7 +79,7 @@ the system mixer is several clicks away. The wheel is
 the level — the picture has nothing to scroll, and it is where every other
 player on the machine puts it — with the value appearing under the readout for
 a couple of seconds and then taking itself away again. Behind the gear it is a
-hairline with a dot on it, at the same weight as everything else there, for
+minus, the number and a plus, at the same weight as everything else there, for
 when you want to see the number rather than nudge it. It is the engine's master
 gain, underneath whatever the system says, and it is remembered between
 launches.
@@ -85,8 +96,14 @@ Give that to somebody with the same version of the app and they hear what you
 heard, from the beginning. `C` copies it, and the field behind the gear takes
 one back — paste the whole message it arrived in if you like, it will find the
 name inside. `N` starts a piece nobody has heard. `R` plays this one again from
-the top. `L` keeps it, and kept pieces are listed behind the gear, one click to
-play.
+the top.
+
+Keeping one is the heart beside its name, on the picture rather than behind the
+gear: it is a thing you do about what is playing, at the moment it is worth
+doing, and by then a panel is closed. `L` does the same from the keyboard. Kept
+pieces are listed under **KEPT** behind the gear, one click to play and a cross
+at the end of the row to drop one — a list that can only be added to is a list
+that stops being read.
 
 Twelve characters is enough because a piece is not much information: a 32-bit
 seed, which mood, and where the field was. **All three are in there**, and that
@@ -230,10 +247,14 @@ the field into a smaller image and stretches it back, which scales the cost by
 the square; there is no edge anywhere in this picture to lose. The dither over
 the top is always drawn at full size, and doubles as dither for the upscale.
 
-Turning the diagnostics on with `D` reports both sides: `dsp2.1%` is the share
-of each audio buffer the synthesis spends, and `ui30fps` is what the picture is
-actually managing. Those two numbers are there so that "the app is CPU heavy"
-is a question with an answer rather than a guess.
+Under those two settings the panel reports both sides of what the app costs:
+`DRAWING 30 FPS` is what the loop is actually managing, and `SYNTH 2%` is the
+share of each audio buffer the synthesis spends. The first is there because a
+frame cap is otherwise invisible — every movement in this picture is written in
+seconds rather than in frames, so 24 and 60 look alike and only cost
+differently. The second is there because the picture settings do nothing about
+the synthesis, and "the app is CPU heavy" should be a question with an answer
+rather than a guess.
 
 ## How it is built
 

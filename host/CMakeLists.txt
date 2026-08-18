@@ -52,6 +52,14 @@ add_executable(null_eigenvalue
 target_include_directories(null_eigenvalue PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}" "${NE_SRC}" "${NE_SRC}/third_party")
 
+# A window, not a terminal with a window next to it. SDL_main.h in main.cpp
+# supplies the WinMain this subsystem needs; the two together are what remove
+# the console that every launch was otherwise opening behind the app. The
+# price is that the stderr lines below go nowhere on Windows unless the run
+# redirects them to a file, which is a fair trade for a black box that opened
+# on every double-click. The arguments still arrive, so --shot is unaffected.
+set_target_properties(null_eigenvalue PROPERTIES WIN32_EXECUTABLE TRUE)
+
 target_compile_definitions(null_eigenvalue PRIVATE NE_WITH_MINIAUDIO)
 
 # The version the updater compares against the newest release tag. CI passes

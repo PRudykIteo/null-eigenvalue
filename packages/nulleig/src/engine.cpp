@@ -398,6 +398,58 @@ void Engine::control_block() {
     float speed = p_speed_.load(std::memory_order_relaxed);
     bool play = p_playing_.load(std::memory_order_relaxed) != 0;
 
+    // ---- sleep ------------------------------------------------------------
+    // The last twenty seconds are a fade, not a countdown to a cut: scaling
+    // the gate's target by the remaining time turns the deadline into a long
+    // exhale, which on this instrument is the only way to stop that does not
+    // sound like a fault. When the deadline lands the engine clears its own
+    // playing flag - the UI finds out later, whenever it next looks, and a UI
+    // that is asleep behind a locked screen never needs to find out at all.
+    //
+    // This and the gate below are ahead of the music rather than in the
+    // middle of it because they are the two things that still have to happen
+    // while the music is stopped: a sleep timer is a clock, and a gate that
+    // stopped being updated would hold a paused instrument at whatever level
+    // it was at when the fade began.
+    float sleep_scale = 1.0f;
+    uint64_t sleep_dl = sleep_deadline_.load(std::memory_order_relaxed);
+    if (sleep_dl != 0) {
+        uint64_t done = frames_done_.load(std::memory_order_relaxed);
+        if (done >= sleep_dl) {
+            sleep_deadline_.store(0, std::memory_order_relaxed);
+            p_playing_.store(0, std::memory_order_relaxed);
+            play = false;
+        } else {
+            float rem = (float)((double)(sleep_dl - done) / (double)sr_);
+            sleep_scale = clampf(rem / 20.0f, 0.0f, 1.0f);
+        }
+    }
+
+    // ---- master gate ------------------------------------------------------
+    float gate_target = (play ? 1.0f : 0.0f) * sleep_scale;
+    float gate_coef = 1.0f - std::exp(-dt / (play ? 1.6f : 1.1f));
+    gate_ += gate_coef * (gate_target - gate_);
+    if (!play && gate_ < 1e-4f) gate_ = 0.0f;
+
+    // ---- paused -----------------------------------------------------------
+    // The piece stops on the frame the transport is pressed, not when the
+    // fade finally reaches zero. Everything below this line is the music
+    // moving - the weather, the root walk, the breath of every voice - and
+    // running it while nobody is listening means coming back after five
+    // minutes to a piece five minutes further on than the one that was left.
+    // What is above the line still happens: the sleep timer keeps its own
+    // time, the gate goes on closing, and a mood or a seed set while paused
+    // is taken now, so pressing play starts the piece that is named on
+    // screen. What fades out is the held moment, which on a drone is
+    // indistinguishable from a fade of the piece carrying on - and it is what
+    // makes the pause a place to come back to.
+    if (!play && !offline_) {
+        motion_ -= motion_ * (1.0f - std::exp(-dt / 12.0f));
+        spark_ -= spark_ * (1.0f - std::exp(-dt / 0.55f));
+        publish_vis();
+        return;
+    }
+
     // ---- weather ----------------------------------------------------------
     // Pink rather than an LFO: 1/f has structure at every timescale, so the
     // piece gets stretches of calm and then a swell instead of a visible
@@ -456,33 +508,6 @@ void Engine::control_block() {
     shimmer_ = s_shimmer_.z;
     gain_ = s_gain_.z;
     width_ = 1.0f + 0.4f * b;
-
-    // ---- sleep ------------------------------------------------------------
-    // The last twenty seconds are a fade, not a countdown to a cut: scaling
-    // the gate's target by the remaining time turns the deadline into a long
-    // exhale, which on this instrument is the only way to stop that does not
-    // sound like a fault. When the deadline lands the engine clears its own
-    // playing flag - the UI finds out later, whenever it next looks, and a UI
-    // that is asleep behind a locked screen never needs to find out at all.
-    float sleep_scale = 1.0f;
-    uint64_t sleep_dl = sleep_deadline_.load(std::memory_order_relaxed);
-    if (sleep_dl != 0) {
-        uint64_t done = frames_done_.load(std::memory_order_relaxed);
-        if (done >= sleep_dl) {
-            sleep_deadline_.store(0, std::memory_order_relaxed);
-            p_playing_.store(0, std::memory_order_relaxed);
-            play = false;
-        } else {
-            float rem = (float)((double)(sleep_dl - done) / (double)sr_);
-            sleep_scale = clampf(rem / 20.0f, 0.0f, 1.0f);
-        }
-    }
-
-    // ---- master gate ------------------------------------------------------
-    float gate_target = (play ? 1.0f : 0.0f) * sleep_scale;
-    float gate_coef = 1.0f - std::exp(-dt / (play ? 1.6f : 1.1f));
-    gate_ += gate_coef * (gate_target - gate_);
-    if (!play && gate_ < 1e-4f) gate_ = 0.0f;
 
     // ---- filters ----------------------------------------------------------
     filt_l_.set(cutoff_, res_, sr_);
@@ -689,6 +714,12 @@ void Engine::get_vis(ne_vis* out) const {
 void Engine::skip(double seconds) {
     if (seconds <= 0.0) return;
 
+    // A skip is the piece moving on its own, with no device behind it: the
+    // gate is usually shut here, because the ordinary way to arrive is to
+    // paste a moment before pressing play, and both the control blocks and
+    // the warm-up render have to run anyway.
+    offline_ = true;
+
     // Everything that decides what this piece *is* happens at control rate:
     // which pitch a voice takes when it comes back in, when a bell falls, how
     // the root walks, what the weather is doing. The per-sample loop only
@@ -720,7 +751,7 @@ void Engine::skip(double seconds) {
                 v.phase[u] -= std::floor(v.phase[u]);
             }
         }
-        frames_done_.fetch_add((uint64_t)kControlBlock, std::memory_order_relaxed);
+        piece_frames_.fetch_add((uint64_t)kControlBlock, std::memory_order_relaxed);
     }
 
     // Rendered in chunks so this needs no allocation proportional to `warm`.
@@ -731,6 +762,8 @@ void Engine::skip(double seconds) {
         render(scratch, n);
         left -= (uint64_t)n;
     }
+
+    offline_ = false;
 }
 
 void Engine::render(float* out, int frames) {
@@ -747,7 +780,7 @@ void Engine::render(float* out, int frames) {
         // device stays open (losing the audio session would cost us the lock
         // screen and, on iOS, the right to run at all), but a paused app has
         // no business spending battery on a reverb tail that is already zero.
-        if (gate_ <= 0.0f && !playing()) {
+        if (gate_ <= 0.0f && !playing() && !offline_) {
             std::memset(out + (size_t)n * 2, 0, sizeof(float) * (size_t)todo * 2);
             peak_ -= peak_ * 0.2f;
             n += todo;
@@ -874,7 +907,17 @@ void Engine::render(float* out, int frames) {
 
         n += todo;
         block_pos_ += todo;
-        frames_done_.fetch_add((uint64_t)todo, std::memory_order_relaxed);
+        // The piece's clock runs when the piece does. What is rendered while
+        // paused is the tail of a held moment, and a held moment is not time
+        // passing in the music.
+        if (playing() || offline_) {
+            piece_frames_.fetch_add((uint64_t)todo, std::memory_order_relaxed);
+        }
+        // Offline this is a skip warming the tails up: the piece moved, the
+        // device did not, and the sleep timer runs on the device.
+        if (!offline_) {
+            frames_done_.fetch_add((uint64_t)todo, std::memory_order_relaxed);
+        }
     }
 }
 

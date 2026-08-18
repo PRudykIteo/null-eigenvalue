@@ -159,6 +159,12 @@ class Engine {
     void get_vis(ne_vis* out) const;
     int sample_rate() const { return sr_i_; }
     double elapsed() const {
+        return (double)piece_frames_.load(std::memory_order_relaxed) / (double)sr_;
+    }
+    // The device's own count, for the diagnostics: "how much audio has been
+    // asked of us" is a different question from "how far into the piece", and
+    // a paused app answering zero to the first one looks like a fault.
+    double device_elapsed() const {
         return (double)frames_done_.load(std::memory_order_relaxed) / (double)sr_;
     }
 
@@ -297,8 +303,20 @@ class Engine {
     float width_ = 1.0f;
 
     int block_pos_ = kControlBlock;
-    // Written by the audio thread, read by whoever asks for elapsed time.
+
+    // Two clocks, and they are not the same one. `frames_done_` is the
+    // device: it counts through a pause, because the sleep timer is a radio's
+    // sleep switch and has to land whether or not anybody restarted the
+    // music. `piece_frames_` is the piece: it stops when the gate closes and
+    // jumps forward on a skip, because "forty minutes in" is a place in the
+    // music and not a time of day. Both are written by the audio thread.
     std::atomic<uint64_t> frames_done_{0};
+    std::atomic<uint64_t> piece_frames_{0};
+
+    // Set while skip() drives the engine by hand. The gate is usually shut at
+    // that point - a token pasted before pressing play - and neither the
+    // control blocks nor the warm-up render may take the paused shortcut.
+    bool offline_ = false;
     float sine_[1025];
 };
 

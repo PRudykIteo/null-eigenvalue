@@ -64,6 +64,11 @@ class App {
     bool is_liked() const;
     void toggle_liked();
 
+    // Drops one kept piece by its place in the list. Liking is a toggle only
+    // while that piece is the one playing; a list you can put things into and
+    // not take out of is a list that eventually stops being read.
+    void forget_liked(size_t index);
+
     // ------------------------------------------------------------- level
 
     float volume() const { return volume_; }

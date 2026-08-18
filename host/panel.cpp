@@ -25,9 +25,8 @@ struct KeyBinding {
 const KeyBinding kKeys[] = {
     {"SPACE", "PLAY / PAUSE"}, {"1 - 6", "MOOD"},        {"ARROWS", "FIELD"},
     {"SCROLL", "VOLUME"},      {"- / =", "VOLUME"},      {"F", "FULL SCREEN"},
-    {"S", "THIS PANEL"},       {"D", "DIAGNOSTICS"},     {"N", "NEW PIECE"},
-    {"R", "RESTART PIECE"},    {"L", "LIKE THIS PIECE"}, {"C", "COPY ITS NAME"},
-    {"M", "COPY THIS MOMENT"},
+    {"S", "THIS PANEL"},       {"N", "NEW PIECE"},       {"R", "RESTART PIECE"},
+    {"L", "KEEP THIS PIECE"},  {"C", "COPY ITS NAME"},   {"M", "COPY THIS MOMENT"},
     {"V", "PASTE A PIECE"},    {"ESC", "CLOSE / WINDOW"},
 };
 
@@ -66,124 +65,161 @@ void Panel::build(const PanelModel& m, float w, float h, float scale,
     scale_ = scale;
     view_h_ = h;
 
-    const float col_w = 230.0f * scale;
-    const float gap = 56.0f * scale;
-    const float total_w = col_w * 2.0f + gap;
-    const float left_x = w * 0.5f - total_w * 0.5f;
-    const float right_x = left_x + col_w + gap;
-
     const float row_h = 26.0f * scale;
     const float head_h = 30.0f * scale;
     const float note_h = 20.0f * scale;
     const float div_h = 34.0f * scale;
+    const float margin = 40.0f * scale;
+
+    // Three columns, with the keys as a wide grid underneath them. The keys
+    // are a table of fourteen rows and reading them down one column is what
+    // pushed the bottom of this panel off the end of a laptop screen.
+    float col_w = 230.0f * scale;
+    float gap = 56.0f * scale;
+    float total_w = col_w * 3.0f + gap * 2.0f;
+    const float room = w - margin * 2.0f;
+    if (total_w > room && room > 0.0f) {
+        // A window narrower than the design shrinks the whole grid rather
+        // than letting the last column walk off the edge of it.
+        const float fit = room / total_w;
+        col_w *= fit;
+        gap *= fit;
+        total_w = room;
+    }
+    const float x0 = w * 0.5f - total_w * 0.5f;
+    const float col_x[3] = {x0, x0 + col_w + gap, x0 + (col_w + gap) * 2.0f};
 
     // Laid out from a nominal top; the scroll offset is applied at the end, so
     // the content height is known before anything is positioned on screen.
-    float ly = 0, ry = 0;
+    float col_y[3] = {0, 0, 0};
 
-    auto put = [&](float& y, float x, Kind k, const std::string& t, float height,
+    auto put = [&](int col, Kind k, const std::string& t, float height,
                    PanelAction a = PanelAction::None, int v = 0,
                    bool sel = false) {
         Item it;
         it.kind = k;
-        it.rect = SDL_FRect{x, y, col_w, height};
+        it.rect = SDL_FRect{col_x[col], col_y[col], col_w, height};
         it.text = t;
         it.action = a;
         it.value = v;
         it.selected = sel;
         items_.push_back(it);
-        y += height;
-        return (int)items_.size() - 1;
+        col_y[col] += height;
     };
 
-    // ---- left column: sleep, volume, picture, updates ----------------------
-    put(ly, left_x, Kind::Title, "SLEEP", head_h);
+    // ---- one: when it stops, and how loud ----------------------------------
+    put(0, Kind::Title, "SLEEP", head_h);
     for (int mins : kSleepMinutes) {
-        put(ly, left_x, Kind::Row, minutes_label(mins), row_h, PanelAction::Sleep,
-            mins, m.sleep_choice_min == mins);
+        put(0, Kind::Row, minutes_label(mins), row_h, PanelAction::Sleep, mins,
+            m.sleep_choice_min == mins);
     }
-    put(ly, left_x, Kind::Row, minutes_label(0), row_h, PanelAction::Sleep, 0,
+    put(0, Kind::Row, minutes_label(0), row_h, PanelAction::Sleep, 0,
         m.sleep_choice_min == 0);
     if (m.sleep_remaining >= 0) {
-        put(ly, left_x, Kind::Note, countdown(m.sleep_remaining), note_h);
+        put(0, Kind::Note, countdown(m.sleep_remaining), note_h);
     }
 
-    put(ly, left_x, Kind::Divider, "", div_h);
-    put(ly, left_x, Kind::Heading, "VOLUME", head_h);
+    put(0, Kind::Divider, "", div_h);
+    put(0, Kind::Heading, "VOLUME", head_h);
     {
         char buf[32];
         std::snprintf(buf, sizeof(buf), "%d%%", (int)std::lround(m.volume * 100.0f));
-        put(ly, left_x, Kind::Row, std::string("-      ") + buf + "      +", row_h,
+        put(0, Kind::Row, std::string("-      ") + buf + "      +", row_h,
             PanelAction::Volume, 0);
     }
 
-    put(ly, left_x, Kind::Divider, "", div_h);
-    put(ly, left_x, Kind::Heading, "PICTURE", head_h);
+    // ---- two: what the picture costs, and which build this is --------------
+    put(1, Kind::Title, "PICTURE", head_h);
     for (int f : kFpsOptions) {
         char buf[24];
         std::snprintf(buf, sizeof(buf), "%d FPS", f);
-        put(ly, left_x, Kind::Row, buf, row_h, PanelAction::Fps, f, m.fps == f);
+        put(1, Kind::Row, buf, row_h, PanelAction::Fps, f, m.fps == f);
+    }
+    if (m.fps_now > 0.0f) {
+        // The measurement, because at a glance a drone at 24 and the same
+        // drone at 60 look alike: the motion is all written in seconds, so
+        // the cap changes what it costs and not what it looks like.
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "DRAWING %.0f FPS", (double)m.fps_now);
+        put(1, Kind::Note, buf, note_h);
     }
     for (int s : kScaleOptions) {
         char buf[24];
         std::snprintf(buf, sizeof(buf), "%d%% DETAIL", s);
         const int cur = (int)std::lround(m.render_scale * 100.0f);
-        put(ly, left_x, Kind::Row, buf, row_h, PanelAction::RenderScale, s, cur == s);
+        put(1, Kind::Row, buf, row_h, PanelAction::RenderScale, s, cur == s);
     }
 
     if (m.updates_enabled) {
-        put(ly, left_x, Kind::Divider, "", div_h);
-        put(ly, left_x, Kind::Heading, "UPDATES", head_h);
-        put(ly, left_x, Kind::Row, m.update_auto ? "AUTOMATIC  ON" : "AUTOMATIC  OFF",
-            row_h, PanelAction::UpdateAuto, 0, m.update_auto);
-        put(ly, left_x, Kind::Row, "CHECK NOW", row_h, PanelAction::UpdateCheck, 0);
+        put(1, Kind::Divider, "", div_h);
+        put(1, Kind::Heading, "UPDATES", head_h);
+        put(1, Kind::Row, m.update_auto ? "AUTOMATIC  ON" : "AUTOMATIC  OFF", row_h,
+            PanelAction::UpdateAuto, 0, m.update_auto);
+        put(1, Kind::Row, "CHECK NOW", row_h, PanelAction::UpdateCheck, 0);
         if (m.update_actionable) {
-            put(ly, left_x, Kind::Row, "INSTALL", row_h, PanelAction::UpdateInstall, 0,
-                true);
+            put(1, Kind::Row, "INSTALL", row_h, PanelAction::UpdateInstall, 0, true);
         }
         if (!m.update_status.empty()) {
-            put(ly, left_x, Kind::Note, m.update_status, note_h);
+            put(1, Kind::Note, m.update_status, note_h);
         }
     }
 
-    // ---- right column: pieces, then the keys -------------------------------
-    put(ry, right_x, Kind::Title, "PIECES", head_h);
-    put(ry, right_x, Kind::Note, m.token.empty() ? "NE1-....-....-...." : m.token,
-        note_h);
-    put(ry, right_x, Kind::Row, "NEW", row_h, PanelAction::NewPiece, 0);
-    put(ry, right_x, Kind::Row, "RESTART", row_h, PanelAction::RestartPiece, 0);
-    put(ry, right_x, Kind::Row, "COPY", row_h, PanelAction::CopyPiece, 0);
-    put(ry, right_x, Kind::Row, "COPY THIS MOMENT", row_h, PanelAction::CopyMoment, 0);
-    put(ry, right_x, Kind::Row, "PASTE", row_h, PanelAction::PastePiece, 0);
-    put(ry, right_x, Kind::Row, m.liked ? "LIKED" : "LIKE", row_h,
-        PanelAction::LikePiece, 0, m.liked);
+    // ---- three: the pieces themselves --------------------------------------
+    // Keeping one is not here any more - it belongs on the picture, next to
+    // the name of what is playing. What is left is the list, and the way out
+    // of it: the cross at the end of a row, drawn and hit-tested below.
+    put(2, Kind::Title, "PIECES", head_h);
+    put(2, Kind::Note, m.token.empty() ? "NE1-....-....-...." : m.token, note_h);
+    put(2, Kind::Row, "NEW", row_h, PanelAction::NewPiece, 0);
+    put(2, Kind::Row, "RESTART", row_h, PanelAction::RestartPiece, 0);
+    put(2, Kind::Row, "COPY", row_h, PanelAction::CopyPiece, 0);
+    put(2, Kind::Row, "COPY THIS MOMENT", row_h, PanelAction::CopyMoment, 0);
+    put(2, Kind::Row, "PASTE", row_h, PanelAction::PastePiece, 0);
 
     if (!m.liked_list.empty()) {
-        put(ry, right_x, Kind::Divider, "", div_h);
-        put(ry, right_x, Kind::Heading, "LIKED", head_h);
+        put(2, Kind::Divider, "", div_h);
+        put(2, Kind::Heading, "KEPT", head_h);
         for (size_t i = 0; i < m.liked_list.size(); ++i) {
-            put(ry, right_x, Kind::Row, m.liked_list[i], row_h, PanelAction::PlayLiked,
-                (int)i, m.liked_list[i] == m.token);
+            put(2, Kind::Row, m.liked_list[i], row_h, PanelAction::PlayLiked, (int)i,
+                m.liked_list[i] == m.token);
         }
     }
 
-    put(ry, right_x, Kind::Divider, "", div_h);
-    put(ry, right_x, Kind::Heading, "KEYS", head_h);
-    for (const KeyBinding& k : kKeys) {
-        Item it;
-        it.kind = Kind::KeyRow;
-        it.rect = SDL_FRect{right_x, ry, col_w, row_h};
-        it.text = k.key;
-        it.second = k.meaning;
-        items_.push_back(it);
-        ry += row_h;
+    // ---- and the keys, across all three ------------------------------------
+    float keys_y = std::max(col_y[0], std::max(col_y[1], col_y[2]));
+    {
+        Item div;
+        div.kind = Kind::Divider;
+        div.rect = SDL_FRect{x0, keys_y, total_w, div_h};
+        items_.push_back(div);
+        keys_y += div_h;
+
+        Item head;
+        head.kind = Kind::Heading;
+        head.rect = SDL_FRect{x0, keys_y, total_w, head_h};
+        head.text = "KEYS";
+        items_.push_back(head);
+        keys_y += head_h;
     }
 
-    content_h_ = std::max(ly, ry);
+    constexpr int kKeyCols = 4;
+    const int key_count = (int)(sizeof(kKeys) / sizeof(kKeys[0]));
+    const int per_col = (key_count + kKeyCols - 1) / kKeyCols;
+    const float key_w = total_w / (float)kKeyCols;
+    for (int i = 0; i < key_count; ++i) {
+        Item it;
+        it.kind = Kind::KeyRow;
+        it.rect = SDL_FRect{x0 + key_w * (float)(i / per_col),
+                            keys_y + row_h * (float)(i % per_col), key_w, row_h};
+        it.text = kKeys[i].key;
+        it.second = kKeys[i].meaning;
+        items_.push_back(it);
+    }
+
+    content_h_ = keys_y + row_h * (float)per_col;
 
     // Centred when it fits, scrolled when it does not - so an ordinary window
     // shows no sign that there could be anything to scroll.
-    const float margin = 40.0f * scale;
     float top;
     if (content_h_ + margin * 2.0f <= h) {
         top = (h - content_h_) * 0.5f;
@@ -239,6 +275,29 @@ void Panel::draw(const PanelModel& m, const MoodPalette& p, Renderer& r,
                 text.draw_centred(it.text, cx, it.rect.y + 11.0f * scale_,
                                   it.selected ? Weight::Regular : Weight::Light,
                                   10.0f * scale_, 2.4f * scale_, c);
+                // A kept piece has to be droppable, or the list only ever
+                // grows and stops being worth reading. Two bars rather than a
+                // letter X, which at this size reads as part of the token.
+                if (it.action == PanelAction::PlayLiked) {
+                    const float bx = it.rect.x + it.rect.w - 9.0f * scale_;
+                    const float by = it.rect.y + it.rect.h * 0.5f;
+                    const float arm = 3.0f * scale_;
+                    const float hw = 0.9f * scale_;
+                    const Colour xc{1, 1, 1, 0.24f * a};
+                    for (int d = 0; d < 2; ++d) {
+                        const float ux = 0.7071f;
+                        const float uy = d == 0 ? 0.7071f : -0.7071f;
+                        const Vec2 p0{bx - ux * arm, by - uy * arm};
+                        const Vec2 p1{bx + ux * arm, by + uy * arm};
+                        const Vec2 n{-uy * hw, ux * hw};
+                        r.tri(Vec2{p0.x + n.x, p0.y + n.y},
+                              Vec2{p0.x - n.x, p0.y - n.y},
+                              Vec2{p1.x - n.x, p1.y - n.y}, xc);
+                        r.tri(Vec2{p0.x + n.x, p0.y + n.y},
+                              Vec2{p1.x - n.x, p1.y - n.y},
+                              Vec2{p1.x + n.x, p1.y + n.y}, xc);
+                    }
+                }
                 break;
             }
             case Kind::KeyRow: {
@@ -264,6 +323,10 @@ PanelHit Panel::hit_test(float x, float y) const {
         if (it.action == PanelAction::None) continue;
         if (x < it.rect.x || x > it.rect.x + it.rect.w) continue;
         if (y < it.rect.y || y > it.rect.y + it.rect.h) continue;
+        if (it.action == PanelAction::PlayLiked &&
+            x > it.rect.x + it.rect.w - 18.0f * scale_) {
+            return PanelHit{PanelAction::ForgetLiked, it.value};
+        }
         if (it.action == PanelAction::Volume) {
             // One row, two halves: left of centre is down, right is up.
             const float cx = it.rect.x + it.rect.w * 0.5f;

@@ -19,6 +19,7 @@ namespace ne {
 struct HudModel {
     int mood = 1;
     bool playing = false;
+    bool liked = false;
     float root_hz = 55.0f;
     std::string token;
     double elapsed = 0;   // seconds into the piece
@@ -31,7 +32,7 @@ struct HudModel {
 
 // Where a click landed, so the caller can act without the HUD knowing what a
 // controller is.
-enum class HudHit { None, Transport, Mood, Token };
+enum class HudHit { None, Transport, Mood, Token, Like, Settings };
 
 struct HudResult {
     HudHit hit = HudHit::None;
@@ -52,6 +53,8 @@ class Hud {
     SDL_FRect transport_{0, 0, 0, 0};
     SDL_FRect dots_[kPaletteCount] = {};
     SDL_FRect token_{0, 0, 0, 0};
+    SDL_FRect like_{0, 0, 0, 0};
+    SDL_FRect gear_{0, 0, 0, 0};
 
     float dots_y_ = 0;
     float name_y_ = 0;

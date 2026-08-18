@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -179,6 +180,12 @@ void App::toggle_liked() {
         liked_.insert(liked_.begin(), t);
         if (liked_.size() > kMaxLiked) liked_.resize(kMaxLiked);
     }
+    save_prefs();
+}
+
+void App::forget_liked(size_t index) {
+    if (index >= liked_.size()) return;
+    liked_.erase(liked_.begin() + (std::ptrdiff_t)index);
     save_prefs();
 }
 

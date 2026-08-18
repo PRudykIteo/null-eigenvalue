@@ -13,6 +13,11 @@
 // composition and the chrome's scaling get verified in a container.
 
 #include <SDL3/SDL.h>
+// Brings the platform's real entry point with it, which is what lets the
+// Windows build be a windowed one: without it, linking as a GUI subsystem
+// application fails for want of a WinMain, and with a console subsystem every
+// launch puts a black terminal behind the window.
+#include <SDL3/SDL_main.h>
 
 #include <algorithm>
 #include <cmath>
@@ -180,6 +185,7 @@ int main(int argc, char** argv) {
 
             hm.mood = app.mood();
             hm.playing = app.playing();
+            hm.liked = app.is_liked();
             hm.root_hz = v.root_hz;
             hm.instrument = app.instrument_name();
             hm.token = app.token();
@@ -191,9 +197,9 @@ int main(int argc, char** argv) {
                 pm.sleep_remaining = app.sleep_remaining();
                 pm.volume = app.volume();
                 pm.fps = app.fps();
+                pm.fps_now = (float)kTargetFps;
                 pm.render_scale = app.render_scale();
                 pm.token = app.token();
-                pm.liked = app.is_liked();
                 pm.liked_list = app.liked();
                 pm.updates_enabled = true;
                 pm.update_status = "UP TO DATE";
@@ -238,6 +244,7 @@ int main(int argc, char** argv) {
 
     bool hud_up = true;
     bool panel_up = false;
+    float fps_now = 0;
     float panel_amt = 0;
     float hud_amt = 0;
     float hud_idle = 0;
@@ -365,7 +372,9 @@ int main(int argc, char** argv) {
                                 break;
                             case ne::PanelAction::NewPiece: app.new_piece(); break;
                             case ne::PanelAction::RestartPiece: app.restart(); break;
-                            case ne::PanelAction::LikePiece: app.toggle_liked(); break;
+                            case ne::PanelAction::ForgetLiked:
+                                app.forget_liked((size_t)ph.value);
+                                break;
                             case ne::PanelAction::CopyPiece:
                                 SDL_SetClipboardText(app.token().c_str());
                                 break;
@@ -406,6 +415,10 @@ int main(int argc, char** argv) {
                                        : ne::HudResult{};
                     if (r.hit == ne::HudHit::Transport) {
                         app.toggle();
+                    } else if (r.hit == ne::HudHit::Settings) {
+                        panel_up = true;
+                    } else if (r.hit == ne::HudHit::Like) {
+                        app.toggle_liked();
                     } else if (r.hit == ne::HudHit::Mood) {
                         app.set_mood(r.mood);
                     } else if (r.hit == ne::HudHit::None) {
@@ -441,6 +454,10 @@ int main(int argc, char** argv) {
         // and an unclamped dt there throws the spring across the screen.
         if (dt > 0.05f) dt = 0.05f;
         if (dt <= 0.0f) dt = 1.0f / (float)kTargetFps;
+        // Smoothed over about a second: one frame's reciprocal moves far too
+        // much to read, and this is a number somebody is watching while they
+        // change the cap.
+        fps_now += (1.0f / dt - fps_now) * (1.0f - std::exp(-dt / 1.0f));
 
         if (dragging) {
             float mx = 0, my = 0;
@@ -482,6 +499,7 @@ int main(int argc, char** argv) {
         if (hud_amt > 0.01f && panel_amt < 0.5f) {
             hm.mood = app.mood();
             hm.playing = app.playing();
+            hm.liked = app.is_liked();
             hm.root_hz = v.root_hz;
             hm.instrument = app.instrument_name();
             hm.token = app.token();
@@ -498,9 +516,9 @@ int main(int argc, char** argv) {
             pm.sleep_remaining = app.sleep_remaining();
             pm.volume = app.volume();
             pm.fps = app.fps();
+            pm.fps_now = fps_now;
             pm.render_scale = app.render_scale();
             pm.token = app.token();
-            pm.liked = app.is_liked();
             pm.liked_list = app.liked();
             pm.updates_enabled = updater.enabled();
             pm.update_auto = updater.automatic();
@@ -519,9 +537,14 @@ int main(int argc, char** argv) {
 
         SDL_RenderPresent(renderer);
 
+        // Precise rather than plain: SDL_DelayNS waits *at least* what it is
+        // asked for and on Windows that is the scheduler's granularity, up to
+        // fifteen milliseconds of it. At a 60 fps budget of sixteen that is
+        // the difference between the cap doing what it says and the cap being
+        // an unpredictable something in the forties.
         const Uint64 spent = SDL_GetTicksNS() - now;
         const Uint64 budget = (Uint64)(1e9 / (double)app.fps());
-        if (spent < budget) SDL_DelayNS(budget - spent);
+        if (spent < budget) SDL_DelayPrecise(budget - spent);
     }
 
     text.shutdown();

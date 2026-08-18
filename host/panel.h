@@ -28,8 +28,8 @@ enum class PanelAction {
     CopyPiece,
     CopyMoment,
     PastePiece,
-    LikePiece,
     PlayLiked,    // value = index into liked
+    ForgetLiked,  // value = index into liked
     UpdateCheck,
     UpdateAuto,
     UpdateInstall,
@@ -49,10 +49,13 @@ struct PanelModel {
 
     float volume = 0.7f;
     int fps = 30;
+    // What the loop is actually managing, as against what it was asked for.
+    // A cap you cannot see the effect of is a cap nobody believes in.
+    float fps_now = 0;
+    // Share of each audio buffer the synthesis spends, 0..1.
     float render_scale = 0.75f;
 
     std::string token;
-    bool liked = false;
     std::vector<std::string> liked_list;
 
     bool updates_enabled = false;

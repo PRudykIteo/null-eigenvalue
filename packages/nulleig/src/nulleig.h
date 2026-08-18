@@ -120,7 +120,13 @@ NE_API void ne_set_touch(ne_engine* e, int active, float speed);
 
 /* Master fade. Anything non-zero fades up over ~1.2 s, zero fades down and
  * then idles the synthesis. The device keeps running either way - reopening it
- * on every pause is how you collect glitches on the way back in. */
+ * on every pause is how you collect glitches on the way back in.
+ *
+ * Once the fade is out, the piece itself stops: the harmony, the weather and
+ * every voice hold where they were, and ne_elapsed stops with them. A pause is
+ * a place in the music you can come back to, not a mute over a piece that
+ * carries on ageing without you. The sleep timer is the exception and keeps
+ * counting - see ne_set_sleep. */
 NE_API void ne_set_playing(ne_engine* e, int playing);
 NE_API int  ne_playing(const ne_engine* e);
 
@@ -187,12 +193,6 @@ typedef struct ne_status {
     int sample_rate;        /* what the device actually runs at           */
     unsigned int callbacks; /* audio callbacks served since ne_start      */
     double elapsed;         /* seconds of audio rendered                  */
-    /* Share of each buffer's own duration that render() spends producing it,
-     * smoothed over about a second. 0.02 means the synthesis is using 2% of
-     * one core; 1.0 means it is exactly keeping up and about to stop doing
-     * so. Zero when built without a device - the offline harness has no real
-     * time to be a fraction of. */
-    float load;
 } ne_status;
 
 NE_API void ne_get_status(ne_engine* e, ne_status* out);

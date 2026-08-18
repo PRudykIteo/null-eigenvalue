@@ -41,11 +41,6 @@ struct Holder {
     std::atomic<int> r_device_start{-999};
     std::atomic<int> started{0};
     std::atomic<unsigned int> callbacks{0};
-    // Share of each buffer's own duration that render() spends producing it.
-    // The number that decides whether "the app is CPU heavy" is a question
-    // about the synthesis or about the picture - and until it is on screen,
-    // that question gets answered by guessing.
-    std::atomic<float> load{0.0f};
 #ifdef NE_WITH_MINIAUDIO
     ma_context context{};
     ma_device device{};
@@ -65,25 +60,7 @@ void data_callback(ma_device* dev, void* out, const void* in, ma_uint32 frames) 
     if (h == nullptr) return;
     h->callbacks.fetch_add(1, std::memory_order_relaxed);
 
-    const auto t0 = std::chrono::steady_clock::now();
     h->engine.render((float*)out, (int)frames);
-    const auto t1 = std::chrono::steady_clock::now();
-
-    // A clock read either side of the render is about forty nanoseconds
-    // against a twenty-millisecond buffer, so measuring this costs nothing
-    // worth measuring.
-    const double sr = (double)dev->sampleRate;
-    if (sr > 0.0 && frames > 0) {
-        const double spent =
-            std::chrono::duration<double>(t1 - t0).count();
-        const double budget = (double)frames / sr;
-        const float now = (float)(spent / budget);
-        // Smoothed over about a second of callbacks. An instantaneous figure
-        // swings between 0.2% and 8% depending on where the control block
-        // lands, which reads as a broken meter rather than as a load.
-        float prev = h->load.load(std::memory_order_relaxed);
-        h->load.store(prev + 0.05f * (now - prev), std::memory_order_relaxed);
-    }
 }
 
 // The device is restarted from here rather than from the notification
@@ -261,8 +238,7 @@ NE_API void ne_get_status(ne_engine* e, ne_status* out) {
     out->ma_device_init = h->r_device_init.load(std::memory_order_relaxed);
     out->ma_device_start = h->r_device_start.load(std::memory_order_relaxed);
     out->callbacks = h->callbacks.load(std::memory_order_relaxed);
-    out->elapsed = h->engine.elapsed();
-    out->load = h->load.load(std::memory_order_relaxed);
+    out->elapsed = h->engine.device_elapsed();
     out->sample_rate = h->engine.sample_rate();
 #ifdef NE_WITH_MINIAUDIO
     out->device_state = h->device_ok ? (int)ma_device_get_state(&h->device) : -1;
